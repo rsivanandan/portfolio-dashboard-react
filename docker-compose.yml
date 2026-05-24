@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  portfolio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: portfolio-dashboard:latest
+    container_name: portfolio-dashboard
+    ports:
+      - "8081:8080"
+    volumes:
+      - .:/app
+    environment:
+      - CORS_ORIGINS=http://localhost:8081,http://192.168.1.250:8081
+      - JWT_SECRET=a4bd77917d242f6b762918e2708ef19a42aab66c5013d08b77cb958bb6c5dfd5
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

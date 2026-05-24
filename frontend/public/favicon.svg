@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded background -->
+  <rect width="32" height="32" rx="7" fill="url(#bg)"/>
+
+  <!-- Lotus: 5 petals fanning from base point (16,24) -->
+  <!-- Far left -->
+  <g transform="rotate(-52, 16, 24)">
+    <path d="M 16,24 C 12.5,21 12.5,14 16,11 C 19.5,14 19.5,21 16,24 Z" fill="white" fill-opacity="0.45"/>
+  </g>
+  <!-- Near left -->
+  <g transform="rotate(-26, 16, 24)">
+    <path d="M 16,24 C 12.5,21 12.5,14 16,11 C 19.5,14 19.5,21 16,24 Z" fill="white" fill-opacity="0.72"/>
+  </g>
+  <!-- Center -->
+  <path d="M 16,24 C 12,21 12,13 16,9.5 C 20,13 20,21 16,24 Z" fill="white"/>
+  <!-- Near right -->
+  <g transform="rotate(26, 16, 24)">
+    <path d="M 16,24 C 12.5,21 12.5,14 16,11 C 19.5,14 19.5,21 16,24 Z" fill="white" fill-opacity="0.72"/>
+  </g>
+  <!-- Far right -->
+  <g transform="rotate(52, 16, 24)">
+    <path d="M 16,24 C 12.5,21 12.5,14 16,11 C 19.5,14 19.5,21 16,24 Z" fill="white" fill-opacity="0.45"/>
+  </g>
+
+  <!-- Water surface -->
+  <path d="M 7,25.5 Q 16,27.5 25,25.5" stroke="white" stroke-opacity="0.35" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</svg>

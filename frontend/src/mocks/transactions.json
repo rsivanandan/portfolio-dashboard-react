@@ -1,0 +1,7 @@
+[
+  { "date": "2026-04-10", "type": "Buy", "security": "HDFC Flexi Cap Fund", "amount": 25000 },
+  { "date": "2026-03-15", "type": "SIP", "security": "Nippon India Growth", "amount": 10000 },
+  { "date": "2026-02-20", "type": "Sell", "security": "ICICI Bluechip", "amount": 15000 },
+  { "date": "2025-12-28", "type": "Buy", "security": "Axis Midcap", "amount": 20000 },
+  { "date": "2026-01-05", "type": "SIP", "security": "Parag Parikh Flexi Cap", "amount": 12000 }
+]
