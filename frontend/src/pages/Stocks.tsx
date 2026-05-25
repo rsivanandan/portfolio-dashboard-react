@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { useStocks, useStocksRajesh, useStocksSandhya } from '../hooks/useApi'
+import { useStocks, useStocksUser1, useStocksUser2 } from '../hooks/useApi'
 import { StatCard, Spinner, Card, PageHeader, Table, ReturnsCell, PctCell } from '../components/UI'
 import { formatINR, CHART_THEME } from '../utils/format'
 import type { Stock } from '../hooks/useApi'
 import { IconSearch } from '@tabler/icons-react'
 import { getStoredUsers } from '../hooks/useUsers'
 
-type Tab = 'all' | 'rajesh' | 'sandhya'
+type Tab = 'all' | 'user1' | 'user2'
 
 export default function Stocks() {
   const [tab, setTab] = useState<Tab>('all')
@@ -15,11 +15,11 @@ export default function Stocks() {
   const users = getStoredUsers()
 
   const { data: allStocks, isLoading: allL } = useStocks()
-  const { data: rajeshStocks, isLoading: rajL } = useStocksRajesh()
-  const { data: sandhyaStocks, isLoading: sanL } = useStocksSandhya()
+  const { data: user1Stocks, isLoading: u1L } = useStocksUser1()
+  const { data: user2Stocks, isLoading: u2L } = useStocksUser2()
 
-  const activeData = tab === 'all' ? allStocks : tab === 'rajesh' ? rajeshStocks : sandhyaStocks
-  const isLoading = tab === 'all' ? allL : tab === 'rajesh' ? rajL : sanL
+  const activeData = tab === 'all' ? allStocks : tab === 'user1' ? user1Stocks : user2Stocks
+  const isLoading = tab === 'all' ? allL : tab === 'user1' ? u1L : u2L
 
   const data = activeData || []
   const filtered = data.filter((s) => s.Ticker.toLowerCase().includes(search.toLowerCase()))
@@ -46,8 +46,8 @@ export default function Stocks() {
       <div className="flex gap-2 border-b border-zinc-800 pb-0">
         {([
           { key: 'all' as Tab, label: 'All Stocks' },
-          { key: 'rajesh' as Tab, label: users[0]?.name ?? 'User 1' },
-          { key: 'sandhya' as Tab, label: users[1]?.name ?? 'User 2' },
+          { key: 'user1' as Tab, label: users[0]?.name ?? 'User 1' },
+          { key: 'user2' as Tab, label: users[1]?.name ?? 'User 2' },
         ]).map((t) => (
           <button
             key={t.key}

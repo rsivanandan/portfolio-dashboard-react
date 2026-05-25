@@ -13,7 +13,7 @@ services:
       - .:/app
     environment:
       - CORS_ORIGINS=http://localhost:8081,http://192.168.1.250:8081
-      - JWT_SECRET=a4bd77917d242f6b762918e2708ef19a42aab66c5013d08b77cb958bb6c5dfd5
+      - JWT_SECRET=${JWT_SECRET}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]

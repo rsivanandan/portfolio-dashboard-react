@@ -30,8 +30,8 @@ describe('App Routing', () => {
 
   beforeEach(() => {
     cleanup = mockFetch({
-      '/api/admin/mf/rajesh': [],
-      '/api/admin/mf/sandhya': [],
+      '/api/admin/mf/user1': [],
+      '/api/admin/mf/user2': [],
       '/api/market/ticker': [],
     })
   })

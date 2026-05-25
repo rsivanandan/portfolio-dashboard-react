@@ -48,7 +48,7 @@ portfolio/
     │   │   ├── Summary.tsx       # Pie charts + stocks vs MF comparison
     │   │   ├── Analytics.tsx     # Timeline, monthly patterns, snapshots
     │   │   ├── Stocks.tsx        # All stock holdings + returns chart
-    │   │   └── MutualFunds.tsx   # MF holdings, Rajesh/Sandhya tabs, category pie
+    │   │   └── MutualFunds.tsx   # MF holdings, User 1/User 2 tabs, category pie
     │   ├── components/
     │   │   ├── UI.tsx            # StatCard, Table, Badge, Spinner etc.
     │   │   ├── Sidebar.tsx       # Navigation + Refresh/Save buttons
@@ -70,7 +70,7 @@ portfolio/
 | **Summary** | Donut charts (invested vs now, invested vs returns), stocks vs MF bar |
 | **Analytics** | Year-wise investment timeline, monthly patterns, snapshot tracker with CAGR |
 | **Stocks** | Full table with search, returns % bar chart, sortable |
-| **Mutual Funds** | All/Rajesh/Sandhya tabs, category pie, invested vs current bar, holdings table |
+| **Mutual Funds** | All/User 1/User 2 tabs, category pie, invested vs current bar, holdings table |
 | **Refresh NAV** | One click — updates all MF NAVs from AMFI via mftool |
 | **Refresh Stocks** | One click — updates all stock LTPs from yfinance |
 | **Save Snapshot** | Saves today's portfolio value to history for CAGR tracking |
@@ -82,8 +82,8 @@ portfolio/
 
 Place your `investments.db` in the `backend/` directory.
 The schema expected:
-- `Rajesh_MF` — Rajesh's MF transactions
-- `Sandhya_MF` — Sandhya's MF transactions
+- `User1_MF` — User 1's MF transactions
+- `User2_MF` — User 2's MF transactions
 - `MF_Summary` — Fund categories
 - `Stocks` — Stock holdings
 - `networth_history` — Created automatically on first snapshot save

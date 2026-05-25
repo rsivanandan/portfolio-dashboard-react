@@ -18,7 +18,7 @@ import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
 } from 'recharts'
-import { useStocks, useStocksRajesh, useStocksSandhya, useMutualFunds, useMFRajesh, useMFSandhya, useMFCategories } from '../hooks/useApi'
+import { useStocks, useStocksUser1, useStocksUser2, useMutualFunds, useMFUser1, useMFUser2, useMFCategories } from '../hooks/useApi'
 import { StatCard, Spinner, Card, PageHeader, Table, ReturnsCell, PctCell, TabBar } from '../components/UI'
 import { XIRRCard } from '../components/XIRRCard'
 import { calculateXIRR } from '../utils/xirrUtils'
@@ -39,12 +39,12 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
   const [catChart, setCatChart] = useState<'pie' | 'pyramid'>('pyramid')
 
   const { data: allMF, isLoading: allL } = useMutualFunds()
-  const { data: rajeshMF, isLoading: rajL } = useMFRajesh()
-  const { data: sandhyaMF, isLoading: sanL } = useMFSandhya()
+  const { data: user1MF, isLoading: u1L } = useMFUser1()
+  const { data: user2MF, isLoading: u2L } = useMFUser2()
   const { data: cats } = useMFCategories()
 
-  const activeData = tab === 'all' ? allMF : tab === 'user1' ? rajeshMF : tab === 'user2' ? sandhyaMF : []
-  const isLoading = tab === 'all' ? allL : tab === 'user1' ? rajL : tab === 'user2' ? sanL : false
+  const activeData = tab === 'all' ? allMF : tab === 'user1' ? user1MF : tab === 'user2' ? user2MF : []
+  const isLoading = tab === 'all' ? allL : tab === 'user1' ? u1L : tab === 'user2' ? u2L : false
 
   const data = (activeData || []).filter((f) => f.Fund_Name && f.Fund_Name.trim() !== '')
   const filtered = data.filter((f) => (f.Fund_Name || '').toLowerCase().includes(search.toLowerCase()))
@@ -66,8 +66,8 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
 
   const xirrValue = calculateXIRR(
     tab === 'all' ? getCashflows(allMF || []) :
-    tab === 'user1' ? getCashflows(rajeshMF || []) :
-    tab === 'user2' ? getCashflows(sandhyaMF || []) :
+    tab === 'user1' ? getCashflows(user1MF || []) :
+    tab === 'user2' ? getCashflows(user2MF || []) :
     []
   )
 
@@ -243,11 +243,11 @@ function StocksSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab:
   const [search, setSearch] = useState('')
 
   const { data: allStocks, isLoading: allL } = useStocks()
-  const { data: rajeshStocks, isLoading: rajL } = useStocksRajesh()
-  const { data: sandhyaStocks, isLoading: sanL } = useStocksSandhya()
+  const { data: user1Stocks, isLoading: u1L } = useStocksUser1()
+  const { data: user2Stocks, isLoading: u2L } = useStocksUser2()
 
-  const activeData = tab === 'all' ? allStocks : tab === 'user1' ? rajeshStocks : tab === 'user2' ? sandhyaStocks : []
-  const isLoading = tab === 'all' ? allL : tab === 'user1' ? rajL : tab === 'user2' ? sanL : false
+  const activeData = tab === 'all' ? allStocks : tab === 'user1' ? user1Stocks : tab === 'user2' ? user2Stocks : []
+  const isLoading = tab === 'all' ? allL : tab === 'user1' ? u1L : tab === 'user2' ? u2L : false
   const data = activeData || []
   const filtered = data.filter((s) => s.Ticker.toLowerCase().includes(search.toLowerCase()))
 

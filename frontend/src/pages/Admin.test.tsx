@@ -25,8 +25,8 @@ describe('Admin Page', () => {
 
   beforeEach(() => {
     cleanup = mockFetch({
-      '/api/admin/mf/rajesh': SEED_MF_ROWS,
-      '/api/admin/mf/sandhya': [],
+      '/api/admin/mf/user1': SEED_MF_ROWS,
+      '/api/admin/mf/user2': [],
       '/api/admin/mf': { status: 'ok', rowid: 99 },
     })
   })
@@ -56,16 +56,16 @@ describe('Admin Page', () => {
     })
   })
 
-  it('shows owner tabs (rajesh/sandhya)', async () => {
+  it('shows owner tabs (User 1/User 2)', async () => {
     renderWithProviders(<Admin />)
     const buttons = screen.getAllByRole('button')
-    const rajesh = buttons.find((b) => b.textContent === 'rajesh')
-    const sandhya = buttons.find((b) => b.textContent === 'sandhya')
-    expect(rajesh).toBeInTheDocument()
-    expect(sandhya).toBeInTheDocument()
+    const u1 = buttons.find((b) => b.textContent === 'User 1')
+    const u2 = buttons.find((b) => b.textContent === 'User 2')
+    expect(u1).toBeInTheDocument()
+    expect(u2).toBeInTheDocument()
   })
 
-  it('switches to sandhya owner tab', async () => {
+  it('switches to user2 owner tab', async () => {
     renderWithProviders(<Admin />)
     const user = userEvent.setup()
 
@@ -74,11 +74,11 @@ describe('Admin Page', () => {
       expect(screen.getByText('HDFC Mid-Cap')).toBeInTheDocument()
     })
 
-    // Find the sandhya button in the MF section (first occurrence)
-    const buttons = screen.getAllByRole('button').filter((b) => b.textContent === 'sandhya')
+    // Find the user2 button in the MF section (first occurrence)
+    const buttons = screen.getAllByRole('button').filter((b) => b.textContent === 'User 2')
     await user.click(buttons[0])
 
-    // After switch, HDFC Mid-Cap should disappear (sandhya has empty list)
+    // After switch, HDFC Mid-Cap should disappear (user2 has empty list)
     await waitFor(() => {
       expect(screen.queryByText('HDFC Mid-Cap')).not.toBeInTheDocument()
     })
@@ -143,8 +143,8 @@ describe('Stocks Upload Section', () => {
 
   beforeEach(() => {
     cleanup = mockFetch({
-      '/api/admin/mf/rajesh': [],
-      '/api/admin/mf/sandhya': [],
+      '/api/admin/mf/user1': [],
+      '/api/admin/mf/user2': [],
     })
   })
 

@@ -156,14 +156,14 @@ export interface NiftyPoint {
 
 export const useSummary = () => useQuery({ queryKey: ['summary'], queryFn: () => get<Summary>('/summary') })
 export const useStocks = () => useQuery({ queryKey: ['stocks'], queryFn: () => get<Stock[]>('/stocks') })
-export const useStocksRajesh = () =>
+export const useStocksUser1 = () =>
   useQuery({ queryKey: ['stocks-user1'], queryFn: () => get<Stock[]>('/stocks/user1') })
-export const useStocksSandhya = () =>
+export const useStocksUser2 = () =>
   useQuery({ queryKey: ['stocks-user2'], queryFn: () => get<Stock[]>('/stocks/user2') })
 export const useMutualFunds = () => useQuery({ queryKey: ['mf'], queryFn: () => get<MutualFund[]>('/mutual-funds') })
-export const useMFRajesh = () =>
+export const useMFUser1 = () =>
   useQuery({ queryKey: ['mf-user1'], queryFn: () => get<MutualFund[]>('/mutual-funds/user1') })
-export const useMFSandhya = () =>
+export const useMFUser2 = () =>
   useQuery({ queryKey: ['mf-user2'], queryFn: () => get<MutualFund[]>('/mutual-funds/user2') })
 export const useMFCategories = () =>
   useQuery({ queryKey: ['mf-cats'], queryFn: () => get<MFCategory[]>('/mutual-funds/categories') })
@@ -304,8 +304,8 @@ export function useUploadStocks() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['stocks'] })
-      qc.invalidateQueries({ queryKey: ['stocks-rajesh'] })
-      qc.invalidateQueries({ queryKey: ['stocks-sandhya'] })
+      qc.invalidateQueries({ queryKey: ['stocks-user1'] })
+      qc.invalidateQueries({ queryKey: ['stocks-user2'] })
     },
   })
 }

@@ -37,7 +37,7 @@ import {
   CartesianGrid,
   Legend,
 } from 'recharts'
-import { useMutualFunds, useMFRajesh, useMFSandhya, useMFCategories } from '../hooks/useApi'
+import { useMutualFunds, useMFUser1, useMFUser2, useMFCategories } from '../hooks/useApi'
 import { getStoredUsers } from '../hooks/useUsers'
 import { StatCard, Spinner, Card, PageHeader, Table, ReturnsCell, PctCell } from '../components/UI'
 import { XIRRCard } from '../components/XIRRCard'
@@ -46,7 +46,7 @@ import { formatINR, CHART_COLORS, CHART_THEME } from '../utils/format'
 import type { MutualFund } from '../hooks/useApi'
 import { IconSearch } from '@tabler/icons-react'
 
-type Tab = 'all' | 'rajesh' | 'sandhya'
+type Tab = 'all' | 'user1' | 'user2'
 
 export default function MutualFunds() {
   const [tab, setTab] = useState<Tab>('all')
@@ -55,12 +55,12 @@ export default function MutualFunds() {
   const users = getStoredUsers()
 
   const { data: allMF, isLoading: allL } = useMutualFunds()
-  const { data: rajeshMF, isLoading: rajL } = useMFRajesh()
-  const { data: sandhyaMF, isLoading: sanL } = useMFSandhya()
+  const { data: user1MF, isLoading: u1L } = useMFUser1()
+  const { data: user2MF, isLoading: u2L } = useMFUser2()
   const { data: cats } = useMFCategories()
 
-  const activeData = tab === 'all' ? allMF : tab === 'rajesh' ? rajeshMF : sandhyaMF
-  const isLoading = tab === 'all' ? allL : tab === 'rajesh' ? rajL : sanL
+  const activeData = tab === 'all' ? allMF : tab === 'user1' ? user1MF : user2MF
+  const isLoading = tab === 'all' ? allL : tab === 'user1' ? u1L : u2L
 
   const data = (activeData || []).filter((f) => f.Fund_Name && f.Fund_Name.trim() !== '')
   const filtered = data.filter((f) => (f.Fund_Name || '').toLowerCase().includes(search.toLowerCase()))
@@ -85,13 +85,13 @@ export default function MutualFunds() {
   }
 
   const allCashflows = getCashflows(allMF || []);
-  const rajeshCashflows = getCashflows(rajeshMF || []);
-  const sandhyaCashflows = getCashflows(sandhyaMF || []);
+  const user1Cashflows = getCashflows(user1MF || []);
+  const user2Cashflows = getCashflows(user2MF || []);
 
   let xirrValue = null;
   if (tab === 'all') xirrValue = calculateXIRR(allCashflows);
-  else if (tab === 'rajesh') xirrValue = calculateXIRR(rajeshCashflows);
-  else if (tab === 'sandhya') xirrValue = calculateXIRR(sandhyaCashflows);
+  else if (tab === 'user1') xirrValue = calculateXIRR(user1Cashflows);
+  else if (tab === 'user2') xirrValue = calculateXIRR(user2Cashflows);
 
   const catPie = (cats || []).map((c) => ({
     name: c.Category,
@@ -110,8 +110,8 @@ export default function MutualFunds() {
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'all', label: 'All Funds' },
-    { key: 'rajesh', label: users[0]?.name ?? 'User 1' },
-    { key: 'sandhya', label: users[1]?.name ?? 'User 2' },
+    { key: 'user1', label: users[0]?.name ?? 'User 1' },
+    { key: 'user2', label: users[1]?.name ?? 'User 2' },
   ]
 
   // Grouped summary data

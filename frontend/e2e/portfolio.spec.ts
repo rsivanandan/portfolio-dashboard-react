@@ -99,7 +99,7 @@ test.describe("Stocks", () => {
       timeout: 10_000,
     });
 
-    for (const label of ["Rajesh", "Sandhya", "All Stocks"]) {
+    for (const label of ["User 1", "User 2", "All Stocks"]) {
       await page.getByRole("button", { name: label }).click();
       await expect(page.getByText("Total Invested")).toBeVisible();
     }
@@ -154,7 +154,7 @@ test.describe("Mutual Funds", () => {
       timeout: 10_000,
     });
 
-    for (const label of ["Rajesh", "Sandhya", "All Funds"]) {
+    for (const label of ["User 1", "User 2", "All Funds"]) {
       await page.getByRole("button", { name: label }).click();
       await expect(page.getByText("Total Invested")).toBeVisible();
     }
@@ -204,7 +204,7 @@ test.describe("Admin", () => {
       page.getByRole("heading", { name: "Admin" })
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Rajesh" }).first()
+      page.getByRole("button", { name: "User 1" }).first()
     ).toBeVisible({ timeout: 10_000 });
     await expect(
       page.getByRole("button", { name: "Sandhya" }).first()
@@ -212,7 +212,7 @@ test.describe("Admin", () => {
   });
 
   test("owner tab switching works", async ({ page }) => {
-    await page.getByRole("button", { name: "Sandhya" }).first().click();
+    await page.getByRole("button", { name: "User 2" }).first().click();
     await expect(page.getByPlaceholder(/Search/i).first()).toBeVisible({
       timeout: 10_000,
     });

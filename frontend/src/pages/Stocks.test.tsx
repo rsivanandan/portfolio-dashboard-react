@@ -9,16 +9,16 @@ const ALL_STOCKS = [
   { Ticker: 'TCS', Qty: 5, Purchase_cost: 3500, LTP: 3700, Value_now: 18500, Value_at_cost: 17500, Returns: 1000, Returns_pct: 5.71 },
 ]
 
-const RAJESH_STOCKS = [ALL_STOCKS[0]]
-const SANDHYA_STOCKS = [ALL_STOCKS[1]]
+const USER1_STOCKS = [ALL_STOCKS[0]]
+const USER2_STOCKS = [ALL_STOCKS[1]]
 
 describe('Stocks Page', () => {
   let cleanup: () => void
 
   beforeEach(() => {
     cleanup = mockFetch({
-      '/api/stocks/rajesh': RAJESH_STOCKS,
-      '/api/stocks/sandhya': SANDHYA_STOCKS,
+      '/api/stocks/user1': USER1_STOCKS,
+      '/api/stocks/user2': USER2_STOCKS,
       '/api/stocks': ALL_STOCKS,
     })
   })
@@ -30,11 +30,11 @@ describe('Stocks Page', () => {
     expect(screen.getByText('Stocks & Smallcase')).toBeInTheDocument()
   })
 
-  it('shows tab switcher with All/Rajesh/Sandhya', () => {
+  it('shows tab switcher with All/User 1/User 2', () => {
     renderWithProviders(<Stocks />)
     expect(screen.getByText('All Stocks')).toBeInTheDocument()
-    expect(screen.getByText('Rajesh')).toBeInTheDocument()
-    expect(screen.getByText('Sandhya')).toBeInTheDocument()
+    expect(screen.getByText('User 1')).toBeInTheDocument()
+    expect(screen.getByText('User 2')).toBeInTheDocument()
   })
 
   it('loads and shows all stocks by default', async () => {
@@ -45,7 +45,7 @@ describe('Stocks Page', () => {
     })
   })
 
-  it('switches to Rajesh tab and shows only Rajesh stocks', async () => {
+  it('switches to User 1 tab and shows only User 1 stocks', async () => {
     renderWithProviders(<Stocks />)
     const user = userEvent.setup()
 
@@ -53,7 +53,7 @@ describe('Stocks Page', () => {
       expect(screen.getByText('INFY')).toBeInTheDocument()
     })
 
-    await user.click(screen.getByText('Rajesh'))
+    await user.click(screen.getByText('User 1'))
 
     await waitFor(() => {
       expect(screen.getByText('INFY')).toBeInTheDocument()
@@ -61,7 +61,7 @@ describe('Stocks Page', () => {
     })
   })
 
-  it('switches to Sandhya tab and shows only Sandhya stocks', async () => {
+  it('switches to User 2 tab and shows only User 2 stocks', async () => {
     renderWithProviders(<Stocks />)
     const user = userEvent.setup()
 
@@ -69,7 +69,7 @@ describe('Stocks Page', () => {
       expect(screen.getByText('TCS')).toBeInTheDocument()
     })
 
-    await user.click(screen.getByText('Sandhya'))
+    await user.click(screen.getByText('User 2'))
 
     await waitFor(() => {
       expect(screen.getByText('TCS')).toBeInTheDocument()

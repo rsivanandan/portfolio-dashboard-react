@@ -29,7 +29,7 @@ export function renderWithProviders(ui: ReactNode, { route = '/' } = {}) {
  *
  * ```ts
  * mockFetch({
- *   '/api/admin/mf/rajesh': [{ rowid: 1, Fund_Name: 'Test' }],
+ *   '/api/admin/mf/user1': [{ rowid: 1, Fund_Name: 'Test' }],
  * })
  * ```
  */
