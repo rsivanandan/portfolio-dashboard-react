@@ -1,10 +1,11 @@
+import asyncio
 import io
 import logging
 import math
 import os
 import sqlite3
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,7 @@ from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
 
 from auth import auth_router, get_current_user
+from pf_import import parse_passbook_pdf
 
 logger = logging.getLogger("portfolio")
 
@@ -102,6 +104,40 @@ def ensure_schema():
             is_approved     INTEGER NOT NULL DEFAULT 0,
             created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS User1_PF (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            account          TEXT DEFAULT '',
+            employee_contrib REAL DEFAULT 0,
+            employer_contrib REAL DEFAULT 0,
+            interest         REAL DEFAULT 0,
+            entry_date       TEXT,
+            notes            TEXT
+        );
+        CREATE TABLE IF NOT EXISTS User2_PF (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            account          TEXT DEFAULT '',
+            employee_contrib REAL DEFAULT 0,
+            employer_contrib REAL DEFAULT 0,
+            interest         REAL DEFAULT 0,
+            entry_date       TEXT,
+            notes            TEXT
+        );
+        CREATE TABLE IF NOT EXISTS PF_Config (
+            user            TEXT PRIMARY KEY,
+            UAN             TEXT DEFAULT '',
+            initial_balance REAL DEFAULT 0,
+            initial_month   TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS PF_Accounts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user            TEXT NOT NULL,
+            account         TEXT NOT NULL,
+            establishment   TEXT DEFAULT '',
+            opening_balance REAL DEFAULT 0,
+            opening_month   TEXT DEFAULT '',
+            UAN             TEXT DEFAULT '',
+            UNIQUE(user, account)
+        );
     """)
     # Add Previous_NAV column to existing tables (ignored if already present)
     for tbl in ("User1_MF", "User2_MF"):
@@ -109,7 +145,75 @@ def ensure_schema():
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN Previous_NAV REAL")
         except sqlite3.OperationalError:
             pass
+    # Add PF columns to networth_history (ignored if already present)
+    for col in ("pf_invested", "pf_value"):
+        try:
+            conn.execute(f"ALTER TABLE networth_history ADD COLUMN {col} REAL")
+        except sqlite3.OperationalError:
+            pass
+    # Add account column to PF tables (ignored if already present)
+    for tbl in ("User1_PF", "User2_PF"):
+        try:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN account TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
+    conn.close()
+
+
+def _refresh_nav():
+    """Refresh all MF NAVs from AMFI.  Safe to call on startup."""
+    from mftool import Mftool
+    conn = get_conn()
+    mft = Mftool()
+    today_iso = date.today().isoformat()
+    rows = conn.execute(
+        "SELECT DISTINCT AMFI_CODE FROM User1_MF "
+        "UNION SELECT DISTINCT AMFI_CODE FROM User2_MF"
+    ).fetchall()
+    for row in rows:
+        code = row[0]
+        try:
+            data = mft.get_scheme_quote(int(code))
+            if not data or "nav" not in data:
+                continue
+            nav = float(data["nav"])
+            nav_date = datetime.strptime(data["last_updated"], "%d-%b-%Y").isoformat()
+            for tbl in ("User1_MF", "User2_MF"):
+                conn.execute(f"""
+                    UPDATE {tbl} SET
+                        Previous_NAV = CASE WHEN NAV_Date IS NULL OR substr(NAV_Date, 1, 10) != ? THEN Current_NAV ELSE Previous_NAV END,
+                        Current_NAV  = ?,
+                        NAV_Date     = ?,
+                        Value_now    = ROUND(Units * ?, 4)
+                    WHERE AMFI_CODE = ?
+                """, (today_iso, nav, nav_date, nav, code))
+            conn.commit()
+        except Exception as e:
+            logger.warning("Failed to update NAV for code %s: %s", code, e)
+    conn.close()
+
+
+def _refresh_stocks():
+    """Refresh all stock LTPs from Yahoo Finance.  Safe to call on startup."""
+    import yfinance as yf
+    conn = get_conn()
+    for tbl in ("User1_Stocks", "User2_Stocks"):
+        rows = conn.execute(f"SELECT Ticker, Qty FROM {tbl}").fetchall()
+        for row in rows:
+            ticker = row["Ticker"].strip()
+            qty    = row["Qty"]
+            try:
+                data = yf.Ticker(ticker + ".NS").history(period="1d")
+                if data.empty:
+                    continue
+                ltp      = float(data["Close"].iloc[-1])
+                value_now = round(qty * ltp, 4)
+                conn.execute(f"UPDATE {tbl} SET LTP=?, Value_now=? WHERE Ticker=?",
+                             (ltp, value_now, row["Ticker"]))
+                conn.commit()
+            except Exception as e:
+                logger.warning("Failed to update stock %s in %s: %s", ticker, tbl, e)
     conn.close()
 
 
@@ -117,6 +221,24 @@ def ensure_schema():
 async def lifespan(app: FastAPI):
     ensure_schema()
     logger.info("DB schema initialised at %s", DB_PATH)
+
+    # Auto-refresh on startup (runs in background thread so startup isn't blocked)
+    async def _auto_refresh():
+        loop = asyncio.get_event_loop()
+        logger.info("Auto-refreshing NAVs on startup…")
+        try:
+            await loop.run_in_executor(None, _refresh_nav)
+        except Exception as e:
+            logger.warning("Auto-refresh NAV failed: %s", e)
+        logger.info("Auto-refreshing stocks on startup…")
+        try:
+            await loop.run_in_executor(None, _refresh_stocks)
+        except Exception as e:
+            logger.warning("Auto-refresh stocks failed: %s", e)
+        logger.info("Auto-refresh complete")
+
+    asyncio.create_task(_auto_refresh())
+
     yield
 
 
@@ -193,14 +315,24 @@ def summary():
         s_mf  = conn.execute("SELECT SUM(Value_at_cost) ac, SUM(Value_now) vn FROM User2_MF").fetchone()
         r_sto = conn.execute("SELECT SUM(Value_at_cost) ac, SUM(Value_now) vn FROM User1_Stocks").fetchone()
         s_sto = conn.execute("SELECT SUM(Value_at_cost) ac, SUM(Value_now) vn FROM User2_Stocks").fetchone()
+        r_pf  = conn.execute("SELECT SUM(employee_contrib + employer_contrib) ac, SUM(interest) int FROM User1_PF").fetchone()
+        s_pf  = conn.execute("SELECT SUM(employee_contrib + employer_contrib) ac, SUM(interest) int FROM User2_PF").fetchone()
 
         mf_invested  = (r_mf["ac"] or 0) + (s_mf["ac"] or 0)
         mf_now       = (r_mf["vn"] or 0) + (s_mf["vn"] or 0)
         sto_invested = (r_sto["ac"] or 0) + (s_sto["ac"] or 0)
         sto_now      = (r_sto["vn"] or 0) + (s_sto["vn"] or 0)
+        r_initial = _get_pf_opening(conn, "user1")
+        s_initial = _get_pf_opening(conn, "user2")
+        r_ac = r_pf["ac"] or 0
+        s_ac = s_pf["ac"] or 0
+        r_int = r_pf["int"] or 0
+        s_int = s_pf["int"] or 0
+        pf_invested  = r_initial + s_initial + r_ac + s_ac
+        pf_now       = r_initial + s_initial + r_ac + s_ac + r_int + s_int
 
-        total_invested = mf_invested + sto_invested
-        total_now      = mf_now + sto_now
+        total_invested = mf_invested + sto_invested + pf_invested
+        total_now      = mf_now + sto_now + pf_now
 
         def pct(n, d):
             return round((n / d) * 100, 2) if d else 0
@@ -214,6 +346,10 @@ def summary():
             "sto_now":        round(sto_now, 2),
             "sto_returns":    round(sto_now - sto_invested, 2),
             "sto_pct":        pct(sto_now - sto_invested, sto_invested),
+            "pf_invested":    round(pf_invested, 2),
+            "pf_now":         round(pf_now, 2),
+            "pf_returns":     round(pf_now - pf_invested, 2),
+            "pf_pct":         pct(pf_now - pf_invested, pf_invested),
             "total_invested": round(total_invested, 2),
             "total_now":      round(total_now, 2),
             "total_returns":  round(total_now - total_invested, 2),
@@ -269,6 +405,390 @@ def stocks_by_owner(owner: str):
             f"SELECT Ticker, Qty, Purchase_cost, LTP, Value_now, Value_at_cost FROM {table}"
         ).fetchall()
         return _enrich_stocks(rows)
+    finally:
+        conn.close()
+
+
+# ── PF (Provident Fund) ──────────────────────────────────────────────────────
+
+def _pf_table(owner: str) -> str:
+    if owner.lower() == "user1":
+        return "User1_PF"
+    if owner.lower() == "user2":
+        return "User2_PF"
+    raise HTTPException(400, "owner must be 'user1' or 'user2'")
+
+
+def _get_pf_config(conn, owner: str):
+    row = conn.execute("SELECT * FROM PF_Config WHERE user=?", (owner,)).fetchone()
+    if row:
+        d = dict(row)
+        d["owner"] = d.pop("user")
+        return d
+    return {"owner": owner, "UAN": "", "initial_balance": 0, "initial_month": ""}
+
+
+def _get_pf_accounts(conn, owner: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM PF_Accounts WHERE user=? ORDER BY account", (owner,)
+    ).fetchall()
+    return rows_to_list(rows)
+
+
+def _get_pf_openings(conn, owner: str) -> dict:
+    """account -> opening balance.  Falls back to legacy PF_Config.initial_balance."""
+    rows = conn.execute(
+        "SELECT account, opening_balance FROM PF_Accounts WHERE user=?", (owner,)
+    ).fetchall()
+    openings = {r["account"]: r["opening_balance"] or 0 for r in rows}
+    if not openings:
+        cfg = _get_pf_config(conn, owner)
+        openings[""] = cfg.get("initial_balance") or 0
+    return openings
+
+
+def _get_pf_opening(conn, owner: str) -> float:
+    row = conn.execute(
+        "SELECT COALESCE(SUM(opening_balance), 0) o FROM PF_Accounts WHERE user=?", (owner,)
+    ).fetchone()
+    if row["o"]:
+        return row["o"]
+    return _get_pf_config(conn, owner).get("initial_balance") or 0
+
+
+def _enrich_pf(rows, config=None, openings: dict | None = None):
+    cfg = config or {}
+    uan = cfg.get("UAN", "")
+    data = rows_to_list(rows)
+    data.sort(key=lambda x: (x.get("entry_date") or "", x.get("account") or ""))
+    openings = dict(openings or {})
+    balances = {acc: (openings.get(acc, 0) or 0) for acc in set(openings)}
+    for r in data:
+        acc = r.get("account") or ""
+        if acc not in balances:
+            balances[acc] = 0.0
+        contrib = (r["employee_contrib"] or 0) + (r["employer_contrib"] or 0)
+        interest_val = r["interest"] or 0
+        balances[acc] = balances[acc] + contrib + interest_val
+        r["total_contrib"] = round(contrib, 2)
+        r["running_balance"] = round(sum(balances.values()), 2)
+        r["UAN"] = uan
+    data.reverse()
+    return data
+
+
+@app.get("/api/pf")
+def pf_all():
+    conn = get_conn()
+    try:
+        rows = conn.execute("""
+            SELECT 'user1' owner, * FROM User1_PF
+            UNION ALL
+            SELECT 'user2' owner, * FROM User2_PF
+        """).fetchall()
+        cfg1 = _get_pf_config(conn, "user1")
+        cfg2 = _get_pf_config(conn, "user2")
+        open1 = _get_pf_openings(conn, "user1")
+        open2 = _get_pf_openings(conn, "user2")
+        u1 = _enrich_pf([r for r in rows if r["owner"] == "user1"], cfg1, open1)
+        u2 = _enrich_pf([r for r in rows if r["owner"] == "user2"], cfg2, open2)
+        combined = u1 + u2
+        combined.sort(key=lambda x: x.get("entry_date") or "", reverse=True)
+        return combined
+    finally:
+        conn.close()
+
+
+@app.get("/api/pf/{owner}")
+def pf_by_owner(owner: str):
+    table = _pf_table(owner)
+    conn = get_conn()
+    try:
+        rows = conn.execute(f"SELECT * FROM {table}").fetchall()
+        cfg = _get_pf_config(conn, owner)
+        openings = _get_pf_openings(conn, owner)
+        return _enrich_pf(rows, cfg, openings)
+    finally:
+        conn.close()
+
+
+# ── ADMIN: PF CRUD ───────────────────────────────────────────────────────────
+
+class PFEntry(BaseModel):
+    owner: str
+    account: str = ""
+    employee_contrib: float = 0
+    employer_contrib: float = 0
+    interest: float = 0
+    entry_date: str = ""
+    notes: str = ""
+
+
+class PFConfigModel(BaseModel):
+    owner: str
+    UAN: str = ""
+    initial_balance: float = 0
+    initial_month: str = ""
+
+
+@app.get("/api/admin/pf/{owner}")
+def admin_list_pf(owner: str):
+    table = _pf_table(owner)
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            f"SELECT id AS rowid, * FROM {table} ORDER BY entry_date DESC"
+        ).fetchall()
+        return rows_to_list(rows)
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/pf", dependencies=[Depends(verify_api_key)])
+def admin_create_pf(entry: PFEntry):
+    table = _pf_table(entry.owner)
+    conn = get_conn()
+    try:
+        cur = conn.execute(f"""
+            INSERT INTO {table} (account, employee_contrib, employer_contrib,
+                                 interest, entry_date, notes)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (entry.account, entry.employee_contrib, entry.employer_contrib,
+              entry.interest, entry.entry_date, entry.notes))
+        conn.commit()
+        return {"status": "ok", "rowid": cur.lastrowid}
+    finally:
+        conn.close()
+
+
+@app.put("/api/admin/pf/{owner}/{rowid}", dependencies=[Depends(verify_api_key)])
+def admin_update_pf(owner: str, rowid: int, entry: PFEntry):
+    table = _pf_table(owner)
+    conn = get_conn()
+    try:
+        conn.execute(f"""
+            UPDATE {table}
+            SET account=?, employee_contrib=?, employer_contrib=?,
+                interest=?, entry_date=?, notes=?
+            WHERE rowid=?
+        """, (entry.account, entry.employee_contrib, entry.employer_contrib,
+              entry.interest, entry.entry_date, entry.notes, rowid))
+        conn.commit()
+        if conn.total_changes == 0:
+            raise HTTPException(404, "Row not found")
+        return {"status": "ok"}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/admin/pf/{owner}/{rowid}", dependencies=[Depends(verify_api_key)])
+def admin_delete_pf(owner: str, rowid: int):
+    table = _pf_table(owner)
+    conn = get_conn()
+    try:
+        conn.execute(f"DELETE FROM {table} WHERE rowid=?", (rowid,))
+        conn.commit()
+        return {"status": "ok"}
+    finally:
+        conn.close()
+
+
+# ── ADMIN: PF CONFIG ────────────────────────────────────────────────────────
+
+@app.get("/api/admin/pf-config/{owner}")
+def admin_get_pf_config(owner: str):
+    if owner.lower() not in ("user1", "user2"):
+        raise HTTPException(400, "owner must be 'user1' or 'user2'")
+    conn = get_conn()
+    try:
+        cfg = _get_pf_config(conn, owner)
+        return cfg
+    finally:
+        conn.close()
+
+
+@app.put("/api/admin/pf-config/{owner}", dependencies=[Depends(verify_api_key)])
+def admin_set_pf_config(owner: str, cfg: PFConfigModel):
+    if owner.lower() not in ("user1", "user2"):
+        raise HTTPException(400, "owner must be 'user1' or 'user2'")
+    conn = get_conn()
+    try:
+        conn.execute("""
+            INSERT INTO PF_Config (user, UAN, initial_balance, initial_month)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user) DO UPDATE SET
+                UAN=excluded.UAN,
+                initial_balance=excluded.initial_balance,
+                initial_month=excluded.initial_month
+        """, (owner, cfg.UAN, cfg.initial_balance, cfg.initial_month))
+        conn.commit()
+        return {"status": "ok"}
+    finally:
+        conn.close()
+
+
+# ── ADMIN: PF ACCOUNTS (per-account opening balance) ────────────────────────
+
+class PFAccountModel(BaseModel):
+    owner: str
+    account: str
+    establishment: str = ""
+    opening_balance: float = 0
+    opening_month: str = ""
+    UAN: str = ""
+
+
+@app.get("/api/admin/pf-accounts/{owner}")
+def admin_get_pf_accounts(owner: str):
+    _pf_table(owner)
+    conn = get_conn()
+    try:
+        return _get_pf_accounts(conn, owner)
+    finally:
+        conn.close()
+
+
+@app.put("/api/admin/pf-accounts/{owner}", dependencies=[Depends(verify_api_key)])
+def admin_set_pf_account(owner: str, acct: PFAccountModel):
+    if owner.lower() != acct.owner.lower():
+        raise HTTPException(400, "owner mismatch")
+    if not acct.account:
+        raise HTTPException(400, "account is required")
+    conn = get_conn()
+    try:
+        conn.execute("""
+            INSERT INTO PF_Accounts (user, account, establishment,
+                                     opening_balance, opening_month, UAN)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user, account) DO UPDATE SET
+                establishment=excluded.establishment,
+                opening_balance=excluded.opening_balance,
+                opening_month=excluded.opening_month,
+                UAN=excluded.UAN
+        """, (owner, acct.account, acct.establishment,
+              acct.opening_balance, acct.opening_month, acct.UAN))
+        conn.commit()
+        return {"status": "ok"}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/admin/pf-accounts/{owner}/{account}", dependencies=[Depends(verify_api_key)])
+def admin_delete_pf_account(owner: str, account: str):
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM PF_Accounts WHERE user=? AND account=?", (owner, account))
+        conn.commit()
+        return {"status": "ok"}
+    finally:
+        conn.close()
+
+
+# ── ADMIN: PF PASSBOOK PDF IMPORT ────────────────────────────────────────────
+
+def _parse_pdf_or_400(file: UploadFile):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only .pdf files are accepted")
+    try:
+        return parse_passbook_pdf(file.file.read())
+    except Exception as e:
+        raise HTTPException(400, f"Failed to parse PDF: {e}")
+
+
+def _upsert_pf_rows(conn, table: str, rows: list[dict]):
+    inserted = 0
+    updated = 0
+    for r in rows:
+        existing = conn.execute(
+            f"SELECT id AS rowid FROM {table} WHERE account=? AND entry_date=? AND notes=?",
+            (r["account"], r["entry_date"], r["notes"]),
+        ).fetchone()
+        if existing:
+            conn.execute(f"""
+                UPDATE {table}
+                SET account=?, employee_contrib=?, employer_contrib=?,
+                    interest=?, entry_date=?, notes=?
+                WHERE rowid=?
+            """, (r["account"], r["employee_contrib"], r["employer_contrib"],
+                  r["interest"], r["entry_date"], r["notes"], existing["rowid"]))
+            updated += 1
+        else:
+            conn.execute(f"""
+                INSERT INTO {table}
+                    (account, employee_contrib, employer_contrib, interest, entry_date, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (r["account"], r["employee_contrib"], r["employer_contrib"],
+                  r["interest"], r["entry_date"], r["notes"]))
+            inserted += 1
+    return inserted, updated
+
+
+@app.post("/api/admin/pf-import/preview/{owner}", dependencies=[Depends(verify_api_key)])
+def admin_pf_import_preview(owner: str, file: UploadFile = File(...)):
+    _pf_table(owner)
+    meta, rows, warnings = _parse_pdf_or_400(file)
+    for r in rows:
+        r["account"] = meta["account"]
+    return {
+        "status": "ok", "meta": meta, "rows": rows,
+        "warnings": warnings, "count": len(rows),
+    }
+
+
+@app.post("/api/admin/pf-import/{owner}", dependencies=[Depends(verify_api_key)])
+def admin_pf_import(owner: str, file: UploadFile = File(...)):
+    table = _pf_table(owner)
+    meta, rows, warnings = _parse_pdf_or_400(file)
+    for r in rows:
+        r["account"] = meta["account"]
+
+    conn = get_conn()
+    try:
+        inserted, updated = _upsert_pf_rows(conn, table, rows)
+        conn.commit()
+        return {
+            "status": "ok", "meta": meta,
+            "inserted": inserted,
+            "updated": updated,
+            "warnings": warnings,
+            "count": len(rows),
+        }
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/pf-import/bulk/{owner}", dependencies=[Depends(verify_api_key)])
+def admin_pf_import_bulk(owner: str, files: list[UploadFile] = File(...)):
+    table = _pf_table(owner)
+    conn = get_conn()
+    results = []
+    try:
+        for file in files:
+            fname = file.filename or "passbook.pdf"
+            if not fname.lower().endswith(".pdf"):
+                results.append({
+                    "filename": fname, "status": "error",
+                    "message": "Only .pdf files are accepted",
+                })
+                continue
+            try:
+                meta, rows, warnings = parse_passbook_pdf(file.file.read())
+            except Exception as e:
+                results.append({
+                    "filename": fname, "status": "error",
+                    "message": f"Failed to parse PDF: {e}",
+                })
+                continue
+            for r in rows:
+                r["account"] = meta["account"]
+            inserted, updated = _upsert_pf_rows(conn, table, rows)
+            conn.commit()
+            results.append({
+                "filename": fname, "status": "ok",
+                "account": meta["account"], "inserted": inserted,
+                "updated": updated, "warnings": warnings, "count": len(rows),
+            })
+        return {"status": "ok", "results": results}
     finally:
         conn.close()
 
@@ -403,7 +923,8 @@ def analytics_snapshots():
     try:
         rows = conn.execute("""
             SELECT year, month, total_invested, total_value,
-                   mf_invested, mf_value, stock_invested, stock_value, recorded_date
+                   mf_invested, mf_value, stock_invested, stock_value,
+                   pf_invested, pf_value, recorded_date
             FROM networth_history ORDER BY year, month
         """).fetchall()
         data = rows_to_list(rows)
@@ -423,24 +944,36 @@ def save_snapshot():
         s_mf  = conn.execute("SELECT SUM(Value_at_cost) ac, SUM(Value_now) vn FROM User2_MF").fetchone()
         r_sto = conn.execute("SELECT SUM(Value_at_cost) ac, SUM(Value_now) vn FROM User1_Stocks").fetchone()
         s_sto = conn.execute("SELECT SUM(Value_at_cost) ac, SUM(Value_now) vn FROM User2_Stocks").fetchone()
+        r_pf  = conn.execute("SELECT SUM(employee_contrib + employer_contrib) ac, SUM(interest) int FROM User1_PF").fetchone()
+        s_pf  = conn.execute("SELECT SUM(employee_contrib + employer_contrib) ac, SUM(interest) int FROM User2_PF").fetchone()
 
         mf_inv = (r_mf["ac"] or 0) + (s_mf["ac"] or 0)
         mf_val = (r_mf["vn"] or 0) + (s_mf["vn"] or 0)
         st_inv = (r_sto["ac"] or 0) + (s_sto["ac"] or 0)
         st_val = (r_sto["vn"] or 0) + (s_sto["vn"] or 0)
+        r_initial = _get_pf_opening(conn, "user1")
+        s_initial = _get_pf_opening(conn, "user2")
+        r_ac = r_pf["ac"] or 0
+        s_ac = s_pf["ac"] or 0
+        r_int = r_pf["int"] or 0
+        s_int = s_pf["int"] or 0
+        pf_inv = r_initial + s_initial + r_ac + s_ac
+        pf_val = r_initial + s_initial + r_ac + s_ac + r_int + s_int
 
         now = datetime.now()
         conn.execute("""
             INSERT INTO networth_history (year, month, total_invested, total_value,
-                                         mf_invested, mf_value, stock_invested, stock_value)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                         mf_invested, mf_value, stock_invested, stock_value,
+                                         pf_invested, pf_value)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(year, month) DO UPDATE SET
                 total_invested=excluded.total_invested, total_value=excluded.total_value,
                 mf_invested=excluded.mf_invested, mf_value=excluded.mf_value,
                 stock_invested=excluded.stock_invested, stock_value=excluded.stock_value,
+                pf_invested=excluded.pf_invested, pf_value=excluded.pf_value,
                 recorded_date=CURRENT_TIMESTAMP
-        """, (now.year, now.month, mf_inv + st_inv, mf_val + st_val,
-              mf_inv, mf_val, st_inv, st_val))
+        """, (now.year, now.month, mf_inv + st_inv + pf_inv, mf_val + st_val + pf_val,
+              mf_inv, mf_val, st_inv, st_val, pf_inv, pf_val))
         conn.commit()
         return {"status": "ok", "message": f"Snapshot saved for {now.year}-{now.month:02d}"}
     finally:
@@ -500,37 +1033,8 @@ def nifty_history():
 @app.post("/api/refresh/nav", dependencies=[Depends(verify_api_key)])
 def refresh_nav():
     try:
-        from mftool import Mftool
-        conn = get_conn()
-        mft = Mftool()
-        updated = []
-        rows = conn.execute(
-            "SELECT DISTINCT AMFI_CODE FROM User1_MF "
-            "UNION SELECT DISTINCT AMFI_CODE FROM User2_MF"
-        ).fetchall()
-        for row in rows:
-            code = row[0]
-            try:
-                data = mft.get_scheme_quote(int(code))
-                if not data or "nav" not in data:
-                    continue
-                nav = float(data["nav"])
-                nav_date = datetime.strptime(data["last_updated"], "%d-%b-%Y").isoformat()
-                for tbl in ("User1_MF", "User2_MF"):
-                    conn.execute(f"""
-                        UPDATE {tbl} SET
-                            Previous_NAV = CASE WHEN NAV_Date IS NULL OR NAV_Date != ? THEN Current_NAV ELSE Previous_NAV END,
-                            Current_NAV  = ?,
-                            NAV_Date     = ?,
-                            Value_now    = ROUND(Units * ?, 4)
-                        WHERE AMFI_CODE = ?
-                    """, (nav_date, nav, nav_date, nav, code))
-                conn.commit()
-                updated.append(code)
-            except Exception as e:
-                logger.warning("Failed to update NAV for code %s: %s", code, e)
-        conn.close()
-        return {"status": "ok", "updated": updated}
+        _refresh_nav()
+        return {"status": "ok"}
     except Exception as e:
         raise HTTPException(500, str(e)) from e
 
@@ -562,29 +1066,8 @@ def amfi_lookup(code: int):
 @app.post("/api/refresh/stocks", dependencies=[Depends(verify_api_key)])
 def refresh_stocks():
     try:
-        import yfinance as yf
-        conn = get_conn()
-        updated = []
-        for tbl in ("User1_Stocks", "User2_Stocks"):
-            rows = conn.execute(f"SELECT Ticker, Qty FROM {tbl}").fetchall()
-            for row in rows:
-                ticker = row["Ticker"].strip()
-                qty    = row["Qty"]
-                try:
-                    data = yf.Ticker(ticker + ".NS").history(period="1d")
-                    if data.empty:
-                        continue
-                    ltp      = float(data["Close"].iloc[-1])
-                    value_now = round(qty * ltp, 4)
-                    conn.execute(f"UPDATE {tbl} SET LTP=?, Value_now=? WHERE Ticker=?",
-                                 (ltp, value_now, row["Ticker"]))
-                    conn.commit()
-                    if ticker not in updated:
-                        updated.append(ticker)
-                except Exception as e:
-                    logger.warning("Failed to update stock %s in %s: %s", ticker, tbl, e)
-        conn.close()
-        return {"status": "ok", "updated": updated}
+        _refresh_stocks()
+        return {"status": "ok"}
     except Exception as e:
         raise HTTPException(500, str(e)) from e
 
@@ -619,7 +1102,7 @@ def admin_list_mf(owner: str):
     conn = get_conn()
     try:
         rows = conn.execute(
-            f"SELECT rowid, * FROM {table} WHERE Fund_Name IS NOT NULL AND TRIM(Fund_Name) != '' ORDER BY Fund_Name"
+            f"SELECT id AS rowid, * FROM {table} WHERE Fund_Name IS NOT NULL AND TRIM(Fund_Name) != '' ORDER BY Fund_Name"
         ).fetchall()
         return rows_to_list(rows)
     finally:

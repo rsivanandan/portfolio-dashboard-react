@@ -44,7 +44,7 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
-async function putJSON<T>(path: string, body: unknown): Promise<T> {
+export async function putJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(BASE + path, {
     method: 'PUT',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -82,6 +82,10 @@ export interface Summary {
   sto_now: number
   sto_returns: number
   sto_pct: number
+  pf_invested: number
+  pf_now: number
+  pf_returns: number
+  pf_pct: number
   total_invested: number
   total_now: number
   total_returns: number
@@ -123,6 +127,56 @@ export interface MFCategory {
   Returns_pct: number
 }
 
+export interface PFEntry {
+  id: number
+  owner?: string
+  UAN: string
+  account: string
+  employee_contrib: number
+  employer_contrib: number
+  total_contrib: number
+  interest: number
+  running_balance: number
+  entry_date: string
+  notes: string
+}
+
+export interface AdminPFRow {
+  rowid: number
+  account: string
+  employee_contrib: number
+  employer_contrib: number
+  interest: number
+  entry_date: string
+  notes: string
+}
+
+export interface PFFormData {
+  owner: string
+  account: string
+  employee_contrib: number
+  employer_contrib: number
+  interest: number
+  entry_date: string
+  notes: string
+}
+
+export interface PFConfig {
+  owner: string
+  UAN: string
+  initial_balance: number
+  initial_month: string
+}
+
+export interface PFAccount {
+  user: string
+  account: string
+  establishment: string
+  opening_balance: number
+  opening_month: string
+  UAN: string
+}
+
 export interface TimelineItem {
   year: string
   invested: number
@@ -143,6 +197,8 @@ export interface Snapshot {
   mf_value: number
   stock_invested: number
   stock_value: number
+  pf_invested?: number
+  pf_value?: number
 }
 
 export interface TickerItem {
@@ -178,6 +234,182 @@ export const useMarketTicker = () =>
   useQuery({ queryKey: ['ticker'], queryFn: () => get<TickerItem[]>('/market/ticker'), staleTime: 60000 })
 export const useNiftyHistory = () =>
   useQuery({ queryKey: ['nifty-hist'], queryFn: () => get<NiftyPoint[]>('/market/nifty-history'), staleTime: 60000 })
+
+export const usePF = () => useQuery({ queryKey: ['pf'], queryFn: () => get<PFEntry[]>('/pf') })
+export const usePFUser1 = () =>
+  useQuery({ queryKey: ['pf-user1'], queryFn: () => get<PFEntry[]>('/pf/user1') })
+export const usePFUser2 = () =>
+  useQuery({ queryKey: ['pf-user2'], queryFn: () => get<PFEntry[]>('/pf/user2') })
+
+export const useAdminPF = (owner: string) =>
+  useQuery({
+    queryKey: ['admin-pf', owner],
+    queryFn: () => get<AdminPFRow[]>(`/admin/pf/${owner}`),
+    enabled: !!owner,
+  })
+
+export function useAdminCreatePF() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: PFFormData) => postJSON<{ status: string; rowid: number }>('/admin/pf', data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-pf'] }),
+  })
+}
+
+export function useAdminUpdatePF() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ owner, rowid, data }: { owner: string; rowid: number; data: PFFormData }) =>
+      putJSON<{ status: string }>(`/admin/pf/${owner}/${rowid}`, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-pf'] }),
+  })
+}
+
+export function useAdminDeletePF() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ owner, rowid }: { owner: string; rowid: number }) =>
+      del<{ status: string }>(`/admin/pf/${owner}/${rowid}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-pf'] }),
+  })
+}
+
+export const usePFConfig = (owner: string) =>
+  useQuery({
+    queryKey: ['pf-config', owner],
+    queryFn: () => get<PFConfig>(`/admin/pf-config/${owner}`),
+    enabled: !!owner,
+  })
+
+export function useUpdatePFConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ owner, data }: { owner: string; data: PFConfig }) =>
+      putJSON<{ status: string }>(`/admin/pf-config/${owner}`, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pf-config'] }),
+  })
+}
+
+// ── ADMIN: PF Accounts (per-account opening balance) ────────────────────────
+
+export const useAdminPFAccounts = (owner: string) =>
+  useQuery({
+    queryKey: ['pf-accounts', owner],
+    queryFn: () => get<PFAccount[]>(`/admin/pf-accounts/${owner}`),
+    enabled: !!owner,
+  })
+
+export function useAdminSetPFAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ owner, data }: { owner: string; data: PFAccount }) =>
+      putJSON<{ status: string }>(`/admin/pf-accounts/${owner}`, data),
+    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ['pf-accounts', vars.owner] }),
+  })
+}
+
+export function useAdminDeletePFAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ owner, account }: { owner: string; account: string }) =>
+      del<{ status: string }>(`/admin/pf-accounts/${owner}/${encodeURIComponent(account)}`),
+    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ['pf-accounts', vars.owner] }),
+  })
+}
+
+// ── ADMIN: PF Passbook PDF Import ───────────────────────────────────────────
+
+export interface PFImportRow {
+  entry_date: string
+  account: string
+  employee_contrib: number
+  employer_contrib: number
+  interest: number
+  notes: string
+}
+
+export interface PFImportMeta {
+  account: string
+  establishment: string
+  UAN: string
+  member_name: string
+}
+
+export interface PFImportPreview {
+  status: string
+  meta: PFImportMeta
+  rows: PFImportRow[]
+  warnings: string[]
+  count: number
+}
+
+export interface PFImportResult {
+  status: string
+  meta: PFImportMeta
+  inserted: number
+  updated: number
+  warnings: string[]
+  count: number
+}
+
+export interface PFBulkResult {
+  filename: string
+  status: string
+  account?: string
+  inserted?: number
+  updated?: number
+  warnings?: string[]
+  count?: number
+  message?: string
+}
+
+export interface PFBulkImportResult {
+  status: string
+  results: PFBulkResult[]
+}
+
+function pfImportFormData(file: File): FormData {
+  const fd = new FormData()
+  fd.append('file', file)
+  return fd
+}
+
+function pfBulkImportFormData(files: File[]): FormData {
+  const fd = new FormData()
+  for (const f of files) fd.append('files', f)
+  return fd
+}
+
+export function usePFImportPreview() {
+  return useMutation({
+    mutationFn: ({ owner, file }: { owner: string; file: File }) =>
+      postFormData<PFImportPreview>(`/admin/pf-import/preview/${owner}`, pfImportFormData(file)),
+  })
+}
+
+export function usePFImport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ owner, file }: { owner: string; file: File }) =>
+      postFormData<PFImportResult>(`/admin/pf-import/${owner}`, pfImportFormData(file)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-pf'] })
+      qc.invalidateQueries({ queryKey: ['pf'] })
+    },
+  })
+}
+
+export function usePFBulkImport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ owner, files }: { owner: string; files: File[] }) =>
+      postFormData<PFBulkImportResult>(`/admin/pf-import/bulk/${owner}`, pfBulkImportFormData(files)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-pf'] })
+      qc.invalidateQueries({ queryKey: ['pf'] })
+    },
+  })
+}
 
 interface RefreshResponse {
   status: string

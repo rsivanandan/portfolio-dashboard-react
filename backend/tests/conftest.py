@@ -19,6 +19,7 @@ def _seed_db(conn: sqlite3.Connection):
     for tbl in ("User1_MF", "User2_MF"):
         conn.execute(f"""
             CREATE TABLE {tbl} (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 Fund_House        TEXT,
                 Fund_Name         TEXT,
                 Folio_Number      TEXT,
@@ -49,6 +50,72 @@ def _seed_db(conn: sqlite3.Connection):
     """)
 
     conn.execute("INSERT INTO User1_MF (Fund_House, Fund_Name) VALUES ('', NULL)")
+
+    for tbl in ("User1_PF", "User2_PF"):
+        conn.execute(f"""
+            CREATE TABLE {tbl} (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                account          TEXT DEFAULT '',
+                employee_contrib REAL DEFAULT 0,
+                employer_contrib REAL DEFAULT 0,
+                interest         REAL DEFAULT 0,
+                entry_date       TEXT,
+                notes            TEXT
+            )
+        """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS PF_Config (
+            user            TEXT PRIMARY KEY,
+            UAN             TEXT DEFAULT '',
+            initial_balance REAL DEFAULT 0,
+            initial_month   TEXT DEFAULT ''
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS PF_Accounts (
+            user            TEXT,
+            account         TEXT,
+            establishment   TEXT DEFAULT '',
+            opening_balance REAL DEFAULT 0,
+            opening_month   TEXT DEFAULT '',
+            UAN             TEXT DEFAULT '',
+            UNIQUE(user, account)
+        )
+    """)
+
+    conn.execute("""
+        INSERT INTO PF_Config (user, UAN, initial_balance, initial_month)
+        VALUES ('user1', 'UAN001', 10000, '2025-12')
+    """)
+    conn.execute("""
+        INSERT INTO PF_Config (user, UAN, initial_balance, initial_month)
+        VALUES ('user2', 'UAN002', 5000, '2025-12')
+    """)
+
+    conn.execute("""
+        INSERT INTO PF_Accounts (user, account, establishment, opening_balance, opening_month, UAN)
+        VALUES ('user1', 'BGBNG00000000000000001', 'Acme Corp', 10000, '2025-12', 'UAN001')
+    """)
+    conn.execute("""
+        INSERT INTO PF_Accounts (user, account, establishment, opening_balance, opening_month, UAN)
+        VALUES ('user2', 'BGBNG00000000000000002', 'Beta Ltd', 5000, '2025-12', 'UAN002')
+    """)
+
+    conn.execute("""
+        INSERT INTO User1_PF (account, employee_contrib, employer_contrib, interest, entry_date)
+        VALUES ('BGBNG00000000000000001', 5000, 3000, 1000, '2026-01')
+    """)
+    conn.execute("""
+        INSERT INTO User1_PF (account, employee_contrib, employer_contrib, interest, entry_date)
+        VALUES ('BGBNG00000000000000001', 5000, 3000, 500, '2026-02')
+    """)
+
+    conn.execute("""
+        INSERT INTO User2_PF (account, employee_contrib, employer_contrib, interest, entry_date)
+        VALUES ('BGBNG00000000000000002', 4000, 2500, 800, '2026-01')
+    """)
 
     for tbl in ("User1_Stocks", "User2_Stocks"):
         conn.execute(f"""
@@ -100,6 +167,8 @@ def _seed_db(conn: sqlite3.Connection):
             mf_value REAL,
             stock_invested REAL,
             stock_value REAL,
+            pf_invested REAL,
+            pf_value REAL,
             recorded_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(year, month)
         )

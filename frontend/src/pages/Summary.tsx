@@ -32,6 +32,7 @@ export default function Summary() {
   const barData = [
     { name: 'Stocks', Invested: s.sto_invested, Value: s.sto_now, Returns: s.sto_returns },
     { name: 'Mutual Funds', Invested: s.mf_invested, Value: s.mf_now, Returns: s.mf_returns },
+    { name: 'PF', Invested: s.pf_invested, Value: s.pf_now, Returns: s.pf_returns },
   ]
 
   interface SummaryPayloadItem {
@@ -149,7 +150,7 @@ export default function Summary() {
       </div>
 
       {/* Stocks vs MF bar */}
-      <Card title="Stocks vs Mutual Funds Comparison">
+      <Card title="Stocks vs Mutual Funds vs PF">
         <ResponsiveContainer width="100%" height={300}>
           <BarChart data={barData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
             <CartesianGrid stroke={CHART_THEME.grid} strokeDasharray="3 3" />

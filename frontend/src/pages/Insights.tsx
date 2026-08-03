@@ -136,12 +136,13 @@ export default function Insights() {
                 </Card>
               </div>
 
-              <Card title="Stocks vs Mutual Funds">
+              <Card title="Stocks vs Mutual Funds vs PF">
                 <ResponsiveContainer width="100%" height={280}>
                   <BarChart
                     data={[
                       { name: 'Stocks', Invested: s.sto_invested, Value: s.sto_now, Returns: s.sto_returns },
                       { name: 'Mutual Funds', Invested: s.mf_invested, Value: s.mf_now, Returns: s.mf_returns },
+                      { name: 'PF', Invested: s.pf_invested, Value: s.pf_now, Returns: s.pf_returns },
                     ]}
                     margin={{ top: 5, right: 20, left: 60, bottom: 5 }}
                   >
@@ -317,7 +318,7 @@ export default function Insights() {
                 </div>
 
                 <div className="mt-6">
-                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">MF vs Stocks Value Trend</div>
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">MF vs Stocks vs PF Value Trend</div>
                   <ResponsiveContainer width="100%" height={220}>
                     <LineChart data={snapshots} margin={{ top: 5, right: 20, left: 60, bottom: 5 }}>
                       <CartesianGrid stroke={CT.grid} strokeDasharray="3 3" />
@@ -327,6 +328,7 @@ export default function Insights() {
                       <Legend wrapperStyle={{ color: CT.text }} />
                       <Line type="monotone" dataKey="mf_value" name="Mutual Funds" stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} />
                       <Line type="monotone" dataKey="stock_value" name="Stocks" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="pf_value" name="PF" stroke="#a78bfa" strokeWidth={2} dot={{ r: 3 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -341,7 +343,7 @@ export default function Insights() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/50">
-                      {['Date', 'Invested', 'Value', 'Returns', 'Return %', 'MF Value', 'Stocks Value'].map(h => (
+                      {['Date', 'Invested', 'Value', 'Returns', 'Return %', 'MF Value', 'Stocks Value', 'PF Value'].map(h => (
                         <th key={h} className="py-2.5 px-4 text-xs font-semibold text-muted-foreground tracking-wider uppercase text-right first:text-left">{h}</th>
                       ))}
                     </tr>
@@ -364,6 +366,7 @@ export default function Insights() {
                           </td>
                           <td className="py-2.5 px-4 font-mono text-right text-muted-foreground">{formatINR(s.mf_value)}</td>
                           <td className="py-2.5 px-4 font-mono text-right text-muted-foreground">{formatINR(s.stock_value)}</td>
+                          <td className="py-2.5 px-4 font-mono text-right text-muted-foreground">{s.pf_value != null ? formatINR(s.pf_value) : '—'}</td>
                         </tr>
                       )
                     })}

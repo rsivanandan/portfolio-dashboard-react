@@ -28,6 +28,10 @@ describe('Admin Page', () => {
       '/api/admin/mf/user1': SEED_MF_ROWS,
       '/api/admin/mf/user2': [],
       '/api/admin/mf': { status: 'ok', rowid: 99 },
+      '/api/admin/pf/user1': [],
+      '/api/admin/pf/user2': [],
+      '/api/admin/pf-config/user1': { user: 'user1', UAN: '', initial_balance: 0, initial_month: '' },
+      '/api/admin/pf-config/user2': { user: 'user2', UAN: '', initial_balance: 0, initial_month: '' },
     })
   })
 
@@ -36,7 +40,7 @@ describe('Admin Page', () => {
   it('renders page header', async () => {
     renderWithProviders(<Admin />)
     expect(screen.getByText('Admin')).toBeInTheDocument()
-    expect(screen.getByText('Manage mutual funds and upload stock data')).toBeInTheDocument()
+    expect(screen.getByText('Manage mutual funds, EPF passbook, and upload stock data')).toBeInTheDocument()
   })
 
   it('renders MF CRUD section with title', async () => {
@@ -145,6 +149,8 @@ describe('Stocks Upload Section', () => {
     cleanup = mockFetch({
       '/api/admin/mf/user1': [],
       '/api/admin/mf/user2': [],
+      '/api/admin/pf/user1': [],
+      '/api/admin/pf/user2': [],
     })
   })
 

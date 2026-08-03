@@ -32,6 +32,10 @@ describe('App Routing', () => {
     cleanup = mockFetch({
       '/api/admin/mf/user1': [],
       '/api/admin/mf/user2': [],
+      '/api/admin/pf/user1': [],
+      '/api/admin/pf/user2': [],
+      '/api/admin/pf-config/user1': { user: 'user1', UAN: '', initial_balance: 0, initial_month: '' },
+      '/api/admin/pf-config/user2': { user: 'user2', UAN: '', initial_balance: 0, initial_month: '' },
       '/api/market/ticker': [],
     })
   })

@@ -1,7 +1,9 @@
+import { useMemo } from 'react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts'
-import { useSummary, useNiftyHistory, useSnapshots } from '../hooks/useApi'
+import { useSummary, useNiftyHistory, useSnapshots, usePF, useAdminPFAccounts, useMutualFunds } from '../hooks/useApi'
 import { StatCard, Spinner, Card, PageHeader } from '../components/UI'
 import { formatINR, formatPct, CHART_THEME_LIGHT, CHART_THEME_DARK } from '../utils/format'
+import { calculateXIRR, buildPFCashflows, buildMFCashflows } from '../utils/xirrUtils'
 import { useTheme } from '../hooks/useTheme'
 import { AnimatedList } from '../components/AnimatedList'
 
@@ -34,8 +36,29 @@ export default function Dashboard() {
   const { data: summary, isLoading: sumLoading } = useSummary()
   const { data: nifty } = useNiftyHistory()
   const { data: snapshots } = useSnapshots()
+  const { data: pfRows } = usePF()
+  const { data: mfRows } = useMutualFunds()
+  const { data: u1Accts } = useAdminPFAccounts('user1')
+  const { data: u2Accts } = useAdminPFAccounts('user2')
   const { theme } = useTheme()
   const CT = theme === 'dark' ? CHART_THEME_DARK : CHART_THEME_LIGHT
+
+  const pfOpenings = useMemo(
+    () => [...(u1Accts || []), ...(u2Accts || [])],
+    [u1Accts, u2Accts],
+  )
+
+  const pfXirr = useMemo(
+    () => calculateXIRR(buildPFCashflows(pfRows || [], pfOpenings)),
+    [pfRows, pfOpenings],
+  )
+  const pfXirrPct = pfXirr != null ? pfXirr * 100 : null
+
+  const mfXirr = useMemo(
+    () => calculateXIRR(buildMFCashflows(mfRows || [])),
+    [mfRows],
+  )
+  const mfXirrPct = mfXirr != null ? mfXirr * 100 : null
 
   // Build portfolio chart: historical snapshots + live
   const pfData = (() => {
@@ -67,7 +90,7 @@ export default function Dashboard() {
         <Spinner />
       ) : (
         summary && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
             {/* Column 1: Total Invested / Current Value */}
             <div className="flex flex-col gap-4">
               <StatCard label="Total Invested" value={formatINR(summary.total_invested)} rawValue={summary.total_invested} accent="blue" />
@@ -91,6 +114,7 @@ export default function Dashboard() {
                 delta={formatPct(summary.mf_pct)}
                 positive={summary.mf_pct >= 0}
                 accent="green"
+                valueSuffix={mfXirrPct != null ? `XIRR ${formatPct(mfXirrPct)}` : undefined}
               />
             </div>
             {/* Column 3: Stocks Invested / Stocks Value */}
@@ -105,7 +129,20 @@ export default function Dashboard() {
                 accent="amber"
               />
             </div>
-            {/* Column 4: Total Returns / Overall Return (CAGR) */}
+            {/* Column 4: PF Invested / PF Value */}
+            <div className="flex flex-col gap-4">
+              <StatCard label="PF Invested" value={formatINR(summary.pf_invested)} rawValue={summary.pf_invested} accent="blue" />
+              <StatCard
+                label="PF Value"
+                value={formatINR(summary.pf_now)}
+                rawValue={summary.pf_now}
+                delta={formatPct(summary.pf_pct)}
+                positive={summary.pf_pct >= 0}
+                accent="violet"
+                valueSuffix={pfXirrPct != null ? `XIRR ${formatPct(pfXirrPct)}` : undefined}
+              />
+            </div>
+            {/* Column 5: Total Returns / Overall Return (CAGR) */}
             <div className="flex flex-col gap-4">
               <StatCard
                 label="Overall Return"

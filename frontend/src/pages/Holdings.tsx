@@ -13,25 +13,25 @@ function isRecentPurchase(purchaseDateStr: string | undefined | null): boolean {
   return (y === today.getFullYear() && m === today.getMonth()) || (y === prevYear && m === prevMonth)
 }
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
 } from 'recharts'
-import { useStocks, useStocksUser1, useStocksUser2, useMutualFunds, useMFUser1, useMFUser2, useMFCategories } from '../hooks/useApi'
+import { useStocks, useStocksUser1, useStocksUser2, useMutualFunds, useMFUser1, useMFUser2, useMFCategories, usePF, usePFUser1, usePFUser2, usePFConfig, useAdminPFAccounts } from '../hooks/useApi'
 import { StatCard, Spinner, Card, PageHeader, Table, ReturnsCell, PctCell, TabBar } from '../components/UI'
 import { XIRRCard } from '../components/XIRRCard'
-import { calculateXIRR } from '../utils/xirrUtils'
+import { calculateXIRR, buildPFCashflows, buildMFCashflows } from '../utils/xirrUtils'
 import { formatINR, CHART_COLORS, CHART_THEME_LIGHT, CHART_THEME_DARK } from '../utils/format'
 import { exportToCSV } from '../utils/export'
 import { useTheme } from '../hooks/useTheme'
 import { useUsers } from '../hooks/useUsers'
-import type { Stock, MutualFund } from '../hooks/useApi'
+import type { Stock, MutualFund, PFEntry, PFAccount } from '../hooks/useApi'
 import { IconSearch, IconDownload } from '@tabler/icons-react'
 import { cn } from '../utils/format'
 
 type PersonTab = 'all' | string
-type OuterTab = 'mf' | 'stocks'
+type OuterTab = 'mf' | 'stocks' | 'pf'
 
 // ── MF section ────────────────────────────────────────────────────────────
 function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: PersonTab; setTab: (t: PersonTab) => void }) {
@@ -54,22 +54,12 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
   const totalRet = totalNow - totalInv
   const totalPct = totalInv ? (totalRet / totalInv) * 100 : 0
 
-  function getCashflows(dataArr: MutualFund[]): { amount: number; date: string }[] {
-    const totalVal = dataArr.reduce((a, f) => a + (f.Value_now || 0), 0)
-    const flows: { amount: number; date: string }[] = []
-    dataArr.forEach((mf) => {
-      if (mf.Value_at_cost && mf.Purchase_Date) flows.push({ amount: -Math.abs(mf.Value_at_cost), date: mf.Purchase_Date })
-    })
-    if (totalVal > 0) flows.push({ amount: totalVal, date: new Date().toISOString().slice(0, 10) })
-    return flows
-  }
-
-  const xirrValue = calculateXIRR(
-    tab === 'all' ? getCashflows(allMF || []) :
-    tab === 'user1' ? getCashflows(user1MF || []) :
-    tab === 'user2' ? getCashflows(user2MF || []) :
+  const xirrValue = calculateXIRR(buildMFCashflows(
+    tab === 'all' ? (allMF || []) :
+    tab === 'user1' ? (user1MF || []) :
+    tab === 'user2' ? (user2MF || []) :
     []
-  )
+  ))
 
   const catPie = (cats || []).map((c) => ({ name: c.Category, value: Math.round(c.Value_now) }))
 
@@ -328,6 +318,84 @@ function StocksSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab:
   )
 }
 
+// ── PF (Provident Fund) section ──────────────────────────────────────────
+function PFSection({ CT, tab }: { CT: typeof CHART_THEME_LIGHT; tab: PersonTab }) {
+  const { data: allPF, isLoading: allL } = usePF()
+  const { data: user1PF, isLoading: u1L } = usePFUser1()
+  const { data: user2PF, isLoading: u2L } = usePFUser2()
+  const { data: user1Cfg } = usePFConfig('user1')
+  const { data: user2Cfg } = usePFConfig('user2')
+  const { data: user1Accts } = useAdminPFAccounts('user1')
+  const { data: user2Accts } = useAdminPFAccounts('user2')
+
+  const activeData = tab === 'all' ? allPF : tab === 'user1' ? user1PF : tab === 'user2' ? user2PF : []
+  const isLoading = tab === 'all' ? allL : tab === 'user1' ? u1L : tab === 'user2' ? u2L : false
+  const data = activeData || []
+
+  const openings: PFAccount[] = (tab === 'all' ? [...(user1Accts || []), ...(user2Accts || [])]
+    : tab === 'user1' ? (user1Accts || [])
+    : tab === 'user2' ? (user2Accts || [])
+    : [])
+
+  const establishmentByAccount = new Map(
+    openings.map((a) => [a.account, a.establishment || '']),
+  )
+
+  const initialBalance = openings.reduce((s, a) => s + (a.opening_balance || 0), 0) ||
+    (tab === 'all'
+      ? (user1Cfg?.initial_balance || 0) + (user2Cfg?.initial_balance || 0)
+      : tab === 'user1'
+        ? (user1Cfg?.initial_balance || 0)
+        : tab === 'user2'
+          ? (user2Cfg?.initial_balance || 0)
+          : 0)
+
+  const totalContrib = initialBalance + data.reduce((a, r) => a + (r.total_contrib || 0), 0)
+  const totalNow = data.length > 0 ? data[0].running_balance || 0 : initialBalance
+  const totalReturns = totalNow - totalContrib
+  const totalPct = totalContrib ? (totalReturns / totalContrib) * 100 : 0
+
+  const pfXirr = useMemo(
+    () => calculateXIRR(buildPFCashflows(data, openings)),
+    [data, openings],
+  )
+
+  const accountLabel = (r: PFEntry) => {
+    const est = establishmentByAccount.get(r.account || '')
+    if (est) return est
+    if (!r.account) return '—'
+    return r.account.length > 14 ? `…${r.account.slice(-10)}` : r.account
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <StatCard label="Total Contributed" value={formatINR(totalContrib)} accent="blue" />
+        <StatCard label="Current Balance" value={formatINR(totalNow)} delta={`${totalPct.toFixed(2)}%`} positive={totalPct >= 0} accent="green" />
+        <StatCard label="Total Returns" value={formatINR(totalReturns)} positive={totalReturns >= 0} accent="amber" />
+        <StatCard label="Entries" value={`${data.length}`} accent="indigo" />
+        <XIRRCard value={pfXirr} label="PF XIRR (Annualized)" accent="rose" />
+      </div>
+
+      <Card title="EPF Passbook">
+        {isLoading ? <Spinner /> : (
+          <Table<PFEntry> data={data} columns={[
+            { key: '_i', label: '#', render: (_r, i) => <span className="text-muted-foreground text-xs font-mono">{i + 1}</span> },
+            { key: 'entry_date', label: 'Month', render: (r) => <span className="font-mono text-foreground text-xs font-semibold">{r.entry_date}</span> },
+            { key: 'account', label: 'Account', render: (r) => <span className="text-muted-foreground text-xs font-mono" title={r.account || undefined}>{accountLabel(r)}</span> },
+            { key: 'UAN', label: 'UAN', render: (r) => <span className="text-muted-foreground text-xs font-mono">{r.UAN || '—'}</span> },
+            { key: 'employee_contrib', label: 'Employee', align: 'right', render: (r) => <span className="font-mono text-xs">{formatINR(r.employee_contrib)}</span> },
+            { key: 'employer_contrib', label: 'Employer', align: 'right', render: (r) => <span className="font-mono text-xs">{formatINR(r.employer_contrib)}</span> },
+            { key: 'total_contrib', label: 'Total Contrib', align: 'right', render: (r) => <span className="font-mono text-xs font-semibold">{formatINR(r.total_contrib)}</span> },
+            { key: 'interest', label: 'Interest', align: 'right', render: (r) => <span className="font-mono text-xs">{formatINR(r.interest)}</span> },
+            { key: 'running_balance', label: 'Balance', align: 'right', render: (r) => <span className="font-mono text-xs font-semibold">{formatINR(r.running_balance)}</span> },
+          ]} />
+        )}
+      </Card>
+    </div>
+  )
+}
+
 // ── Main Holdings page ────────────────────────────────────────────────────
 export default function Holdings() {
   const [outer, setOuter] = useState<OuterTab>('mf')
@@ -339,6 +407,7 @@ export default function Holdings() {
   // Data for CSV export
   const { data: allMF } = useMutualFunds()
   const { data: allStocks } = useStocks()
+  const { data: allPF } = usePF()
 
   const personTabs = [{ key: 'all', label: 'All' }, ...users.map(u => ({ key: u.key, label: u.name }))]
 
@@ -351,7 +420,7 @@ export default function Holdings() {
         'Purchase Date': f.Purchase_Date,
       }))
       exportToCSV(rows as Record<string, unknown>[], `samridhi-mutual-funds-${new Date().toISOString().slice(0,10)}`)
-    } else {
+    } else if (outer === 'stocks') {
       const rows = (allStocks || []).map(s => ({
         Ticker: s.Ticker, Qty: s.Qty,
         'Buy Price': s.Purchase_cost, 'CMP': s.LTP,
@@ -359,6 +428,16 @@ export default function Holdings() {
         Returns: (s.Value_now ?? 0) - (s.Value_at_cost ?? 0),
       }))
       exportToCSV(rows as Record<string, unknown>[], `samridhi-stocks-${new Date().toISOString().slice(0,10)}`)
+    } else {
+      const rows = (allPF || []).map(p => ({
+        Month: p.entry_date, Account: p.account || '', UAN: p.UAN || '',
+        'Employee Contrib': p.employee_contrib,
+        'Employer Contrib': p.employer_contrib,
+        'Total Contrib': p.total_contrib,
+        Interest: p.interest,
+        Balance: p.running_balance,
+      }))
+      exportToCSV(rows as Record<string, unknown>[], `samridhi-pf-${new Date().toISOString().slice(0,10)}`)
     }
   }
 
@@ -377,7 +456,7 @@ export default function Holdings() {
       {/* Both tab bars on the same row */}
       <div className="flex items-center gap-3 flex-wrap">
         <TabBar
-          tabs={[{ key: 'mf', label: 'Mutual Funds' }, { key: 'stocks', label: 'Stocks & Smallcase' }]}
+          tabs={[{ key: 'mf', label: 'Mutual Funds' }, { key: 'stocks', label: 'Stocks & Smallcase' }, { key: 'pf', label: 'PF (EPF)' }]}
           active={outer}
           onChange={(k) => { setOuter(k as OuterTab); setPersonTab('all') }}
         />
@@ -389,7 +468,9 @@ export default function Holdings() {
       </div>
       {outer === 'mf'
         ? <MFSection CT={CT} tab={personTab} setTab={setPersonTab} />
-        : <StocksSection CT={CT} tab={personTab} setTab={setPersonTab} />}
+        : outer === 'stocks'
+        ? <StocksSection CT={CT} tab={personTab} setTab={setPersonTab} />
+        : <PFSection CT={CT} tab={personTab} />}
     </div>
   )
 }

@@ -17,9 +17,11 @@ interface StatCardProps {
   positive?: boolean
   accent?: 'blue' | 'green' | 'amber' | 'indigo' | 'rose' | 'violet' | 'cyan'
   subtitle?: string
+  /** Small note rendered inline to the right of the value (doesn't grow the tile) */
+  valueSuffix?: string
 }
 
-export function StatCard({ label, value, rawValue, valueFormatter, beam, delta, positive, accent = 'blue', subtitle }: StatCardProps) {
+export function StatCard({ label, value, rawValue, valueFormatter, beam, delta, positive, accent = 'blue', subtitle, valueSuffix }: StatCardProps) {
   const accentBar = {
     blue:   'bg-sky-400',
     green:  'bg-emerald-400',
@@ -39,6 +41,7 @@ export function StatCard({ label, value, rawValue, valueFormatter, beam, delta, 
           {rawValue != null
             ? <NumberTicker value={rawValue} formatter={valueFormatter ?? formatINR} />
             : value}
+          {valueSuffix && <span className="ml-3 align-baseline text-xs font-medium text-indigo-600 dark:text-indigo-400"><span className="mr-2 opacity-40">|</span>{valueSuffix}</span>}
         </div>
         {subtitle && <div className="text-muted-foreground text-xs mt-1">{subtitle}</div>}
         <div className={cn(
