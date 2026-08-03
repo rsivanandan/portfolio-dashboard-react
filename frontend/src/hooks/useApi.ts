@@ -105,6 +105,7 @@ export interface MutualFund {
   Units: number
   Purchase_NAV: number
   Current_NAV: number
+  Previous_NAV?: number | null
   Value_at_cost: number
   Value_now: number
   AMFI_CODE: number

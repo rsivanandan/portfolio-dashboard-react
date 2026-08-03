@@ -120,15 +120,17 @@ export default function MutualFunds() {
     Category: string;
     Units: number;
     Current_NAV: number;
+    Previous_NAV: number | null;
     Value_at_cost: number;
     Value_now: number;
     Returns: number;
     Returns_pct: number;
     Avg_Purchase_Price: number | null;
+    Daily_Change: number | null;
   }
 
   const summaryData: SummaryRow[] = (() => {
-    const map = new Map<number, { Fund_Name: string; Category: string; Units: number; Current_NAV: number; Value_at_cost: number; Value_now: number }>()
+    const map = new Map<number, { Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number }>()
     for (const f of data) {
       const key = f.AMFI_CODE
       const existing = map.get(key)
@@ -137,12 +139,14 @@ export default function MutualFunds() {
         existing.Value_at_cost += f.Value_at_cost || 0
         existing.Value_now += f.Value_now || 0
         existing.Current_NAV = f.Current_NAV || existing.Current_NAV
+        existing.Previous_NAV = f.Previous_NAV ?? existing.Previous_NAV
       } else {
         map.set(key, {
           Fund_Name: f.Fund_Name,
           Category: f.Category || 'Other',
           Units: f.Units || 0,
           Current_NAV: f.Current_NAV || 0,
+          Previous_NAV: f.Previous_NAV ?? null,
           Value_at_cost: f.Value_at_cost || 0,
           Value_now: f.Value_now || 0,
         })
@@ -153,6 +157,7 @@ export default function MutualFunds() {
       Returns: r.Value_now - r.Value_at_cost,
       Returns_pct: r.Value_at_cost ? ((r.Value_now - r.Value_at_cost) / r.Value_at_cost) * 100 : 0,
       Avg_Purchase_Price: r.Units ? r.Value_at_cost / r.Units : null,
+      Daily_Change: r.Previous_NAV != null ? r.Units * (r.Current_NAV - r.Previous_NAV) : null,
     }))
   })()
 
@@ -412,15 +417,26 @@ export default function MutualFunds() {
                 key: 'Returns',
                 label: 'Returns',
                 align: 'right',
-                render: (r) => <ReturnsCell value={r.Returns} />, 
+                render: (r) => <ReturnsCell value={r.Returns} />,
+              },
+              {
+                key: 'Daily_Change',
+                label: 'Daily Change',
+                align: 'right',
+                render: (r) =>
+                  r.Daily_Change == null ? (
+                    <span className="text-zinc-500 text-xs font-mono">—</span>
+                  ) : (
+                    <ReturnsCell value={r.Daily_Change} />
+                  ),
               },
               {
                 key: 'Returns_pct',
                 label: 'Return %',
                 align: 'right',
-                render: (r) => <PctCell value={r.Returns_pct} />, 
+                render: (r) => <PctCell value={r.Returns_pct} />,
               },
-              
+
             ]}
           />
         )}

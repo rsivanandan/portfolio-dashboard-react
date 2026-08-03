@@ -83,15 +83,28 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
       current: f.Value_now || 0,
     }))
 
-  type SummaryRow = { Fund_Name: string; Category: string; Units: number; Current_NAV: number; Value_at_cost: number; Value_now: number; Returns: number; Returns_pct: number; Avg_Purchase_Price: number | null }
+  type SummaryRow = { Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number; Returns: number; Returns_pct: number; Avg_Purchase_Price: number | null; Daily_Change: number | null }
   const summaryData: SummaryRow[] = (() => {
-    const map = new Map<number, { Fund_Name: string; Category: string; Units: number; Current_NAV: number; Value_at_cost: number; Value_now: number }>()
+    const map = new Map<number, { Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number }>()
     for (const f of data) {
       const existing = map.get(f.AMFI_CODE)
-      if (existing) { existing.Units += f.Units || 0; existing.Value_at_cost += f.Value_at_cost || 0; existing.Value_now += f.Value_now || 0; existing.Current_NAV = f.Current_NAV || existing.Current_NAV }
-      else map.set(f.AMFI_CODE, { Fund_Name: f.Fund_Name, Category: f.Category || 'Other', Units: f.Units || 0, Current_NAV: f.Current_NAV || 0, Value_at_cost: f.Value_at_cost || 0, Value_now: f.Value_now || 0 })
+      if (existing) {
+        existing.Units += f.Units || 0
+        existing.Value_at_cost += f.Value_at_cost || 0
+        existing.Value_now += f.Value_now || 0
+        existing.Current_NAV = f.Current_NAV || existing.Current_NAV
+        existing.Previous_NAV = f.Previous_NAV ?? existing.Previous_NAV
+      } else {
+        map.set(f.AMFI_CODE, { Fund_Name: f.Fund_Name, Category: f.Category || 'Other', Units: f.Units || 0, Current_NAV: f.Current_NAV || 0, Previous_NAV: f.Previous_NAV ?? null, Value_at_cost: f.Value_at_cost || 0, Value_now: f.Value_now || 0 })
+      }
     }
-    return Array.from(map.values()).map((r) => ({ ...r, Returns: r.Value_now - r.Value_at_cost, Returns_pct: r.Value_at_cost ? ((r.Value_now - r.Value_at_cost) / r.Value_at_cost) * 100 : 0, Avg_Purchase_Price: r.Units ? r.Value_at_cost / r.Units : null }))
+    return Array.from(map.values()).map((r) => ({
+      ...r,
+      Returns: r.Value_now - r.Value_at_cost,
+      Returns_pct: r.Value_at_cost ? ((r.Value_now - r.Value_at_cost) / r.Value_at_cost) * 100 : 0,
+      Avg_Purchase_Price: r.Units ? r.Value_at_cost / r.Units : null,
+      Daily_Change: r.Previous_NAV != null ? r.Units * (r.Current_NAV - r.Previous_NAV) : null,
+    }))
   })()
 
   type DetailRow = MutualFund & { Returns: number; Returns_pct: number; Avg_Purchase_Price: number | null }
@@ -203,6 +216,7 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
             { key: 'Value_at_cost', label: 'Invested', align: 'right', render: (r) => <span className="font-mono text-xs">{formatINR(r.Value_at_cost)}</span> },
             { key: 'Value_now', label: 'Current Value', align: 'right', render: (r) => <span className="font-mono text-xs">{formatINR(r.Value_now)}</span> },
             { key: 'Returns', label: 'Returns', align: 'right', render: (r) => <ReturnsCell value={r.Returns} /> },
+            { key: 'Daily_Change', label: 'Daily Change', align: 'right', render: (r) => r.Daily_Change == null ? <span className="text-muted-foreground text-xs font-mono">—</span> : <ReturnsCell value={r.Daily_Change} /> },
             { key: 'Returns_pct', label: 'Return %', align: 'right', render: (r) => <PctCell value={r.Returns_pct} /> },
           ]} />
         )}

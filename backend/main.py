@@ -103,6 +103,12 @@ def ensure_schema():
             created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
         );
     """)
+    # Add Previous_NAV column to existing tables (ignored if already present)
+    for tbl in ("User1_MF", "User2_MF"):
+        try:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN Previous_NAV REAL")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
@@ -275,7 +281,7 @@ def mutual_funds():
     try:
         rows = conn.execute("""
             SELECT f.Fund_Name, f.Units,
-                   f.Purchase_NAV, f.Current_NAV,
+                   f.Purchase_NAV, f.Current_NAV, f.Previous_NAV,
                    f.Value_at_cost, f.Value_now,
                    f.AMFI_CODE, f.Purchase_Date,
                    COALESCE(s.Category, 'Other') Category
@@ -329,7 +335,7 @@ def mf_by_owner(owner: str):
     conn = get_conn()
     try:
         rows = conn.execute(f"""
-            SELECT r.Fund_Name, r.Units, r.Purchase_NAV, r.Current_NAV,
+            SELECT r.Fund_Name, r.Units, r.Purchase_NAV, r.Current_NAV, r.Previous_NAV,
                    r.Value_at_cost, r.Value_now, r.AMFI_CODE,
                    r.Purchase_Date, s.Category
             FROM {table} r
@@ -512,7 +518,7 @@ def refresh_nav():
                 nav_date = datetime.strptime(data["last_updated"], "%d-%b-%Y").isoformat()
                 for tbl in ("User1_MF", "User2_MF"):
                     conn.execute(f"""
-                        UPDATE {tbl} SET Current_NAV=?, NAV_Date=?,
+                        UPDATE {tbl} SET Previous_NAV=Current_NAV, Current_NAV=?, NAV_Date=?,
                         Value_now=ROUND(Units * ?, 4)
                         WHERE AMFI_CODE=?
                     """, (nav, nav_date, nav, code))
