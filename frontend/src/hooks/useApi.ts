@@ -18,7 +18,7 @@ function handle401() {
   window.dispatchEvent(new Event('auth:unauthorized'))
 }
 
-async function get<T>(path: string): Promise<T> {
+export async function get<T>(path: string): Promise<T> {
   const res = await fetch(BASE + path, { headers: authHeaders(), credentials: 'include' })
   if (res.status === 401) { handle401(); throw new Error('Unauthorized') }
   if (!res.ok) throw new Error(`API error: ${res.status}`)
@@ -252,7 +252,10 @@ export function useAdminCreatePF() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (data: PFFormData) => postJSON<{ status: string; rowid: number }>('/admin/pf', data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-pf'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-pf'] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
+    },
   })
 }
 
@@ -261,7 +264,10 @@ export function useAdminUpdatePF() {
   return useMutation({
     mutationFn: ({ owner, rowid, data }: { owner: string; rowid: number; data: PFFormData }) =>
       putJSON<{ status: string }>(`/admin/pf/${owner}/${rowid}`, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-pf'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-pf'] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
+    },
   })
 }
 
@@ -270,7 +276,10 @@ export function useAdminDeletePF() {
   return useMutation({
     mutationFn: ({ owner, rowid }: { owner: string; rowid: number }) =>
       del<{ status: string }>(`/admin/pf/${owner}/${rowid}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-pf'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-pf'] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
+    },
   })
 }
 
@@ -286,7 +295,10 @@ export function useUpdatePFConfig() {
   return useMutation({
     mutationFn: ({ owner, data }: { owner: string; data: PFConfig }) =>
       putJSON<{ status: string }>(`/admin/pf-config/${owner}`, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pf-config'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pf-config'] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
+    },
   })
 }
 
@@ -304,7 +316,10 @@ export function useAdminSetPFAccount() {
   return useMutation({
     mutationFn: ({ owner, data }: { owner: string; data: PFAccount }) =>
       putJSON<{ status: string }>(`/admin/pf-accounts/${owner}`, data),
-    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ['pf-accounts', vars.owner] }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['pf-accounts', vars.owner] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
+    },
   })
 }
 
@@ -313,7 +328,10 @@ export function useAdminDeletePFAccount() {
   return useMutation({
     mutationFn: ({ owner, account }: { owner: string; account: string }) =>
       del<{ status: string }>(`/admin/pf-accounts/${owner}/${encodeURIComponent(account)}`),
-    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ['pf-accounts', vars.owner] }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['pf-accounts', vars.owner] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
+    },
   })
 }
 
@@ -395,6 +413,7 @@ export function usePFImport() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin-pf'] })
       qc.invalidateQueries({ queryKey: ['pf'] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
     },
   })
 }
@@ -407,6 +426,7 @@ export function usePFBulkImport() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin-pf'] })
       qc.invalidateQueries({ queryKey: ['pf'] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
     },
   })
 }
@@ -503,7 +523,10 @@ export function useAdminCreateMF() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (data: MFFormData) => postJSON<{ status: string; rowid: number }>('/admin/mf', data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-mf'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-mf'] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
+    },
   })
 }
 
@@ -512,7 +535,10 @@ export function useAdminUpdateMF() {
   return useMutation({
     mutationFn: ({ owner, rowid, data }: { owner: string; rowid: number; data: MFFormData }) =>
       putJSON<{ status: string }>(`/admin/mf/${owner}/${rowid}`, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-mf'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-mf'] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
+    },
   })
 }
 
@@ -521,7 +547,10 @@ export function useAdminDeleteMF() {
   return useMutation({
     mutationFn: ({ owner, rowid }: { owner: string; rowid: number }) =>
       del<{ status: string }>(`/admin/mf/${owner}/${rowid}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-mf'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-mf'] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
+    },
   })
 }
 
@@ -539,6 +568,7 @@ export function useUploadStocks() {
       qc.invalidateQueries({ queryKey: ['stocks'] })
       qc.invalidateQueries({ queryKey: ['stocks-user1'] })
       qc.invalidateQueries({ queryKey: ['stocks-user2'] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
     },
   })
 }

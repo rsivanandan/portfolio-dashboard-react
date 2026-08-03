@@ -38,7 +38,7 @@ import {
   Legend,
 } from 'recharts'
 import { useMutualFunds, useMFUser1, useMFUser2, useMFCategories } from '../hooks/useApi'
-import { getStoredUsers } from '../hooks/useUsers'
+import { useUsers } from '../hooks/useUsers'
 import { StatCard, Spinner, Card, PageHeader, Table, ReturnsCell, PctCell } from '../components/UI'
 import { XIRRCard } from '../components/XIRRCard'
 import { calculateXIRR } from '../utils/xirrUtils'
@@ -52,7 +52,7 @@ export default function MutualFunds() {
   const [tab, setTab] = useState<Tab>('all')
   const [search, setSearch] = useState('')
   const [catChart, setCatChart] = useState<'pie' | 'pyramid'>('pyramid')
-  const users = getStoredUsers()
+  const { users } = useUsers()
 
   const { data: allMF, isLoading: allL } = useMutualFunds()
   const { data: user1MF, isLoading: u1L } = useMFUser1()

@@ -138,6 +138,11 @@ def ensure_schema():
             UAN             TEXT DEFAULT '',
             UNIQUE(user, account)
         );
+        CREATE TABLE IF NOT EXISTS user_names (
+            id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner TEXT NOT NULL UNIQUE,
+            name  TEXT NOT NULL DEFAULT ''
+        );
     """)
     # Add Previous_NAV column to existing tables (ignored if already present)
     for tbl in ("User1_MF", "User2_MF"):
@@ -204,7 +209,8 @@ def _refresh_stocks():
             ticker = row["Ticker"].strip()
             qty    = row["Qty"]
             try:
-                data = yf.Ticker(ticker + ".NS").history(period="1d")
+                data = yf.download(ticker + ".NS", period="1d", timeout=10,
+                                   progress=False, auto_adjust=True)
                 if data.empty:
                     continue
                 ltp      = float(data["Close"].iloc[-1])
@@ -621,6 +627,41 @@ def admin_set_pf_config(owner: str, cfg: PFConfigModel):
                 initial_balance=excluded.initial_balance,
                 initial_month=excluded.initial_month
         """, (owner, cfg.UAN, cfg.initial_balance, cfg.initial_month))
+        conn.commit()
+        return {"status": "ok"}
+    finally:
+        conn.close()
+
+
+# ── ADMIN: USER NAMES (display names for owner tabs) ────────────────────────
+
+class UserNamesModel(BaseModel):
+    users: list[dict[str, str]]
+
+
+@app.get("/api/user-names")
+def get_user_names():
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT owner, name FROM user_names ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.put("/api/user-names", dependencies=[Depends(verify_api_key)])
+def set_user_names(body: UserNamesModel):
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM user_names")
+        for u in body.users:
+            owner = str(u.get("owner", "")).strip()
+            name = str(u.get("name", "")).strip()
+            if owner:
+                conn.execute(
+                    "INSERT INTO user_names (owner, name) VALUES (?, ?)",
+                    (owner, name),
+                )
         conn.commit()
         return {"status": "ok"}
     finally:

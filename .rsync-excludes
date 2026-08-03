@@ -1,0 +1,16 @@
+# Files that must never sync to the NAS
+.git/
+backend/venv/
+frontend/node_modules/
+**/__pycache__/
+*.pyc
+.DS_Store
+.pytest_cache/
+backend/.pytest_cache/
+BGBNG*.pdf
+data/
+e2e/
+.env
+*.db
+*.db.bak*
+docker-compose.yml

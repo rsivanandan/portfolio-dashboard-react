@@ -5,14 +5,14 @@ import { StatCard, Spinner, Card, PageHeader, Table, ReturnsCell, PctCell } from
 import { formatINR, CHART_THEME } from '../utils/format'
 import type { Stock } from '../hooks/useApi'
 import { IconSearch } from '@tabler/icons-react'
-import { getStoredUsers } from '../hooks/useUsers'
+import { useUsers } from '../hooks/useUsers'
 
 type Tab = 'all' | 'user1' | 'user2'
 
 export default function Stocks() {
   const [tab, setTab] = useState<Tab>('all')
   const [search, setSearch] = useState('')
-  const users = getStoredUsers()
+  const { users } = useUsers()
 
   const { data: allStocks, isLoading: allL } = useStocks()
   const { data: user1Stocks, isLoading: u1L } = useStocksUser1()

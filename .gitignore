@@ -4,6 +4,10 @@ __pycache__/
 *.pyo
 backend/venv/
 *.db
+*.db.bak*
+
+# Personal financial documents (never sync or commit)
+BGBNG*.pdf
 
 # Node
 node_modules/

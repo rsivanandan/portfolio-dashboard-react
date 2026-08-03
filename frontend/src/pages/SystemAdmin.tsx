@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { PageHeader } from '../components/UI'
 import { cn } from '../utils/format'
 import { IconChevronDown, IconChevronRight, IconUser, IconMail, IconBell, IconShield, IconDatabase, IconWorld, IconPlus, IconTrash, IconLock, IconPencil, IconLogout, IconCircleCheck, IconCircleX, IconUsers } from '@tabler/icons-react'
-import { saveUsers, getStoredUsers, DEFAULT_USERS, type PortfolioUser } from '../hooks/useUsers'
+import { saveUsers, fetchServerUsers, getStoredUsers, STORAGE_KEY, DEFAULT_USERS, type PortfolioUser } from '../hooks/useUsers'
 import { useAuth } from '../hooks/useAuth'
 
 // ── Users Section ─────────────────────────────────────────────────────────────
@@ -22,6 +22,17 @@ function UsersSection() {
   const [locked, setLocked] = useState<boolean>(() => !isDefaultUsers(getStoredUsers()))
   const nextId = () => Math.max(0, ...users.map(u => u.id)) + 1
 
+  useEffect(() => {
+    let cancelled = false
+    fetchServerUsers().then(server => {
+      if (cancelled || !server) return
+      setUsers(server)
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(server)) } catch { /* ignore */ }
+      if (!isDefaultUsers(server)) setLocked(true)
+    })
+    return () => { cancelled = true }
+  }, [])
+
   const addUser = () => {
     if (users.length >= MAX_USERS) return
     const id = nextId()
@@ -37,10 +48,11 @@ function UsersSection() {
     setUsers(u => u.map(x => x.id === id ? { ...x, name } : x))
 
   const handleSave = () => {
-    saveUsers(users)
-    setSaved(true)
-    setLocked(true)
-    setTimeout(() => setSaved(false), 2000)
+    void saveUsers(users).then(() => {
+      setSaved(true)
+      setLocked(true)
+      setTimeout(() => setSaved(false), 2000)
+    })
   }
 
   return (
@@ -72,7 +84,7 @@ function UsersSection() {
               <IconPencil size={13} /> Edit Users
             </button>
             <button
-              onClick={() => { const reset = DEFAULT_USERS; saveUsers(reset); setUsers(reset); setLocked(false) }}
+              onClick={() => { const reset = DEFAULT_USERS; void saveUsers(reset).then(() => { setUsers(reset); setLocked(false) }) }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 hover:border-rose-300 transition-all"
             >
               <IconTrash size={13} /> Reset to Defaults

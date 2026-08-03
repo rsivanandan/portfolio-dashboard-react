@@ -73,9 +73,9 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
       current: f.Value_now || 0,
     }))
 
-  type SummaryRow = { Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number; Returns: number; Returns_pct: number; Avg_Purchase_Price: number | null; Daily_Change: number | null }
+  type SummaryRow = { AMFI_CODE: number; Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number; Returns: number; Returns_pct: number; Avg_Purchase_Price: number | null; Daily_Change: number | null }
   const summaryData: SummaryRow[] = (() => {
-    const map = new Map<number, { Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number }>()
+    const map = new Map<number, { AMFI_CODE: number; Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number }>()
     for (const f of data) {
       const existing = map.get(f.AMFI_CODE)
       if (existing) {
@@ -85,7 +85,7 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
         existing.Current_NAV = f.Current_NAV || existing.Current_NAV
         existing.Previous_NAV = f.Previous_NAV ?? existing.Previous_NAV
       } else {
-        map.set(f.AMFI_CODE, { Fund_Name: f.Fund_Name, Category: f.Category || 'Other', Units: f.Units || 0, Current_NAV: f.Current_NAV || 0, Previous_NAV: f.Previous_NAV ?? null, Value_at_cost: f.Value_at_cost || 0, Value_now: f.Value_now || 0 })
+        map.set(f.AMFI_CODE, { AMFI_CODE: f.AMFI_CODE, Fund_Name: f.Fund_Name, Category: f.Category || 'Other', Units: f.Units || 0, Current_NAV: f.Current_NAV || 0, Previous_NAV: f.Previous_NAV ?? null, Value_at_cost: f.Value_at_cost || 0, Value_now: f.Value_now || 0 })
       }
     }
     return Array.from(map.values()).map((r) => ({
@@ -96,6 +96,12 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
       Daily_Change: r.Previous_NAV != null ? r.Units * (r.Current_NAV - r.Previous_NAV) : null,
     }))
   })()
+
+  const xirrByCode = new Map<number, number | null>()
+  for (const f of data) {
+    if (xirrByCode.has(f.AMFI_CODE)) continue
+    xirrByCode.set(f.AMFI_CODE, calculateXIRR(buildMFCashflows(data.filter((r) => r.AMFI_CODE === f.AMFI_CODE))))
+  }
 
   type DetailRow = MutualFund & { Returns: number; Returns_pct: number; Avg_Purchase_Price: number | null }
   const detailData: DetailRow[] = filtered
@@ -208,6 +214,12 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
             { key: 'Returns', label: 'Returns', align: 'right', render: (r) => <ReturnsCell value={r.Returns} /> },
             { key: 'Daily_Change', label: 'Daily Change', align: 'right', render: (r) => r.Daily_Change == null ? <span className="text-muted-foreground text-xs font-mono">—</span> : <ReturnsCell value={r.Daily_Change} /> },
             { key: 'Returns_pct', label: 'Return %', align: 'right', render: (r) => <PctCell value={r.Returns_pct} /> },
+            { key: 'XIRR', label: 'XIRR', align: 'right', render: (r) => {
+              const x = xirrByCode.get(r.AMFI_CODE)
+              return x == null
+                ? <span className="text-muted-foreground text-xs font-mono">—</span>
+                : <PctCell value={x * 100} />
+            } },
           ]} />
         )}
       </Card>
@@ -232,7 +244,7 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
               { key: 'Value_at_cost', label: 'Invested', align: 'right', render: (r) => <span className="font-mono text-xs">{formatINR(r.Value_at_cost)}</span> },
               { key: 'Value_now', label: 'Current Value', align: 'right', render: (r) => <span className="font-mono text-xs">{formatINR(r.Value_now)}</span> },
               { key: 'Returns', label: 'Returns', align: 'right', render: (r) => <ReturnsCell value={r.Returns} /> },
-              { key: 'Returns_pct', label: 'Return %', align: 'right', render: (r) => <PctCell value={r.Returns_pct} /> },
+            { key: 'Returns_pct', label: 'Return %', align: 'right', render: (r) => <PctCell value={r.Returns_pct} /> },
             ]}
             rowClassName={(row) => isRecentPurchase(row.Purchase_Date) ? 'bg-amber-50 dark:bg-yellow-900/30' : undefined}
           />
