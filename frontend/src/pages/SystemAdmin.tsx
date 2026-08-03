@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { PageHeader } from '../components/UI'
-import { cn } from '../utils/format'
+import { cn, formatINR } from '../utils/format'
 import { IconChevronDown, IconChevronRight, IconUser, IconMail, IconBell, IconShield, IconDatabase, IconWorld, IconPlus, IconTrash, IconLock, IconPencil, IconLogout, IconCircleCheck, IconCircleX, IconUsers } from '@tabler/icons-react'
 import { saveUsers, fetchServerUsers, getStoredUsers, STORAGE_KEY, DEFAULT_USERS, type PortfolioUser } from '../hooks/useUsers'
 import { useAuth } from '../hooks/useAuth'
@@ -262,6 +263,112 @@ function AccountAccessSection() {
   )
 }
 
+// ── Demo Data Section (admin-only) ───────────────────────────────────────────
+
+interface DBModeInfo {
+  mode: string
+  dummy_available: boolean
+  dummy_net_worth: number | null
+}
+
+function DemoDataSection() {
+  const { getToken } = useAuth()
+  const qc = useQueryClient()
+  const [info, setInfo] = useState<DBModeInfo | null>(null)
+  const [switching, setSwitching] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const fetchMode = async () => {
+    const token = getToken()
+    try {
+      const res = await fetch('/api/admin/db-mode', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
+      })
+      if (res.ok) setInfo(await res.json())
+    } catch { /* ignore */ }
+  }
+
+  useEffect(() => { fetchMode() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggle = async () => {
+    if (!info || switching) return
+    const target = info.mode === 'dummy' ? 'live' : 'dummy'
+    const token = getToken()
+    setSwitching(true)
+    setMsg('')
+    try {
+      const res = await fetch('/api/admin/db-mode', {
+        method: 'POST',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ mode: target }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))
+        throw new Error(err.detail || 'Failed to switch database')
+      }
+      await fetchMode()
+      qc.invalidateQueries()
+      setMsg(target === 'dummy'
+        ? 'Switched to demo data — all pages now show inflated values.'
+        : 'Switched back to real data.')
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Error switching database')
+    } finally {
+      setSwitching(false)
+    }
+  }
+
+  if (!info) return <p className="text-xs text-muted-foreground mt-4">Loading…</p>
+
+  const demoOn = info.mode === 'dummy'
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex items-center justify-between px-3 py-2.5 bg-muted/50 border border-border rounded-lg">
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-medium text-foreground">Use demo data (dummy DB)</span>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {demoOn
+              ? `Demo mode active — serving dummy_investments.db${info.dummy_net_worth ? ` (net worth ${formatINR(info.dummy_net_worth)})` : ''}.`
+              : info.dummy_available
+                ? 'Real data active. Dummy DB is available for demos — every value inflated ×10.'
+                : 'Dummy DB not found — run make_dummy_db.py to generate it.'}
+          </p>
+        </div>
+        <button
+          onClick={toggle}
+          disabled={switching || (!demoOn && !info.dummy_available)}
+          className={cn(
+            'relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 shrink-0 ml-3',
+            demoOn ? 'bg-rose-500' : 'bg-muted border border-border',
+          )}
+          title={demoOn ? 'Switch back to real data' : 'Switch to demo data'}
+        >
+          <span
+            className={cn(
+              'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+              demoOn ? 'translate-x-6' : 'translate-x-1',
+            )}
+          />
+        </button>
+      </div>
+      {msg && (
+        <p className={cn('text-xs', msg.includes('Failed') || msg.includes('not found') ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400')}>
+          {msg}
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        Switching never modifies your real data — it only changes which file the dashboard reads. Your real data is restored instantly by toggling back.
+      </p>
+    </div>
+  )
+}
+
 // ── Collapsible Section ──────────────────────────────────────────────────────
 
 function Section({ title, icon: Icon, children }: { title: string; icon: React.ElementType; children: React.ReactNode }) {
@@ -364,6 +471,14 @@ export default function SystemAdmin() {
         <Section title="Account Access" icon={IconUsers}>
           <p className="text-xs text-muted-foreground mt-4 mb-2">Manage who can access this dashboard. Approve pending signups or revoke access.</p>
           <AccountAccessSection />
+        </Section>
+      )}
+
+      {/* Demo Data — admin only */}
+      {user?.is_admin && (
+        <Section title="Demo Data" icon={IconDatabase}>
+          <p className="text-xs text-muted-foreground mt-4 mb-2">Switch between real data and an inflated dummy database for demos.</p>
+          <DemoDataSection />
         </Section>
       )}
 

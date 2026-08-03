@@ -5,6 +5,7 @@ __pycache__/
 backend/venv/
 *.db
 *.db.bak*
+backend/db_mode.txt
 
 # Personal financial documents (never sync or commit)
 BGBNG*.pdf

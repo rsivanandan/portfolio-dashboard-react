@@ -12,20 +12,37 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
 
-from auth import auth_router, get_current_user
+from auth import auth_router, get_current_user, require_admin
 from pf_import import parse_passbook_pdf
 
 logger = logging.getLogger("portfolio")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "investments.db")
+DUMMY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dummy_investments.db")
+MODE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db_mode.txt")
 
-# DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_investments.db")
-# DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "investments.db")
+
+def active_db():
+    """Return the DB the app should serve right now.
+
+    A file-based switch (db_mode.txt) is used so that all uvicorn workers agree
+    on the active DB without a restart.  Falls back to the live DB whenever the
+    dummy file is missing or the mode is unknown.
+    """
+    try:
+        if os.path.exists(MODE_FILE):
+            with open(MODE_FILE, encoding="utf-8") as fh:
+                mode = fh.read().strip()
+            if mode == "dummy" and os.path.exists(DUMMY_PATH):
+                return DUMMY_PATH
+    except OSError:
+        pass
+    return DB_PATH
 
 
 def ensure_schema():
     """Create all tables if they don't exist yet (safe to run on every startup)."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(active_db())
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS User1_MF (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -226,7 +243,7 @@ def _refresh_stocks():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_schema()
-    logger.info("DB schema initialised at %s", DB_PATH)
+    logger.info("DB schema initialised at %s", active_db())
 
     # Auto-refresh on startup (runs in background thread so startup isn't blocked)
     async def _auto_refresh():
@@ -295,7 +312,7 @@ async def verify_api_key(current_user: dict = Depends(get_current_user)):
 
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(active_db())
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -309,6 +326,61 @@ def clean(val):
 
 def rows_to_list(rows):
     return [{k: clean(v) for k, v in dict(r).items()} for r in rows]
+
+
+# ── DB MODE (live / demo dummy) ──────────────────────────────────────────────
+
+class DBModeRequest(BaseModel):
+    mode: str
+
+
+@app.get("/api/admin/db-mode")
+def get_db_mode(current_user: dict = Depends(get_current_user)):
+    """Report which DB is active.  Readable by any authenticated user so the
+    UI badge can be shown for everyone, not just admins."""
+    mode = "live"
+    try:
+        if os.path.exists(MODE_FILE):
+            with open(MODE_FILE, encoding="utf-8") as fh:
+                candidate = fh.read().strip()
+            if candidate == "dummy" and os.path.exists(DUMMY_PATH):
+                mode = "dummy"
+    except OSError:
+        pass
+
+    dummy_net_worth = None
+    dummy_available = os.path.exists(DUMMY_PATH)
+    if dummy_available:
+        try:
+            conn = sqlite3.connect(DUMMY_PATH)
+            dummy_net_worth = conn.execute(
+                "SELECT COALESCE(SUM(Value_now), 0) FROM User1_MF"
+            ).fetchone()[0]
+            conn.close()
+        except sqlite3.Error:
+            dummy_net_worth = None
+
+    return {"mode": mode, "dummy_available": dummy_available,
+            "dummy_net_worth": dummy_net_worth}
+
+
+@app.post("/api/admin/db-mode", dependencies=[Depends(require_admin)])
+def set_db_mode(body: DBModeRequest):
+    """Switch the active DB (admin only).  Never modifies either DB file —
+    just flips which one the app reads from."""
+    mode = body.mode.strip().lower()
+    if mode not in ("live", "dummy"):
+        raise HTTPException(status_code=400, detail="mode must be 'live' or 'dummy'")
+    if mode == "dummy" and not os.path.exists(DUMMY_PATH):
+        raise HTTPException(status_code=404,
+                            detail="dummy_investments.db not found — run make_dummy_db.py first")
+
+    tmp = MODE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(mode)
+    os.replace(tmp, MODE_FILE)
+    logger.info("DB mode switched to %s", mode)
+    return {"mode": mode}
 
 
 # ── SUMMARY ──────────────────────────────────────────────────────────────────

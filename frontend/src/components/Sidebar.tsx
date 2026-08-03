@@ -1,14 +1,14 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   IconLayoutDashboard, IconTrendingUp, IconBriefcase, IconRefresh,
-  IconSettings, IconSun, IconMoon, IconShieldCheck, IconLogout, IconX,
+  IconSettings, IconSun, IconMoon, IconShieldCheck, IconLogout, IconX, IconFlask,
 } from '@tabler/icons-react'
 import { cn } from '../utils/format'
 import { useRefreshNAV, useRefreshStocks } from '../hooks/useApi'
 import { useTheme } from '../hooks/useTheme'
 import { useAuth } from '../hooks/useAuth'
 import { useToast } from './Toast'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 const navGroups = [
   {
@@ -49,12 +49,28 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
     onError: () => toast('Failed to refresh stock prices', 'error'),
   })
   const { theme, toggle } = useTheme()
-  const { user, logout } = useAuth()
+  const { user, logout, getToken } = useAuth()
   const location = useLocation()
+  const [demoOn, setDemoOn] = useState(false)
 
   // Close drawer on route change (mobile)
   useEffect(() => {
     onClose?.()
+  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Track demo (dummy DB) mode — refreshed on navigation so a toggle in
+  // System Admin is reflected everywhere for all users.
+  useEffect(() => {
+    let cancelled = false
+    const token = getToken()
+    fetch('/api/admin/db-mode', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (!cancelled) setDemoOn(data?.mode === 'dummy') })
+      .catch(() => { if (!cancelled) setDemoOn(false) })
+    return () => { cancelled = true }
   }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const inner = (
@@ -77,6 +93,14 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           </button>
         )}
       </div>
+
+      {/* Demo mode banner */}
+      {demoOn && (
+        <div className="mx-2.5 mt-2.5 flex items-center justify-center gap-1.5 rounded-lg bg-[hsl(var(--danger)/0.12)] border border-[hsl(var(--danger)/0.35)] px-2 py-1.5" role="status">
+          <IconFlask size={13} className="text-[hsl(var(--danger))] shrink-0" aria-hidden="true" />
+          <span className="text-[10.5px] font-bold uppercase tracking-wider text-[hsl(var(--danger))]">Demo Mode</span>
+        </div>
+      )}
 
       {/* Nav */}
       <nav className="flex-1 px-2.5 py-4 space-y-5 overflow-y-auto" aria-label="Main navigation">

@@ -59,7 +59,8 @@ COPYFILE_DISABLE=1 tar czf - \
   --exclude='./e2e' \
   --exclude='./.env' \
   --exclude='./docker-compose.yml' \
-  --exclude='*.db' --exclude='*.db.bak*' \
+  --exclude='*.db.bak*' \
+  --exclude='investments.db' --exclude='demoinvestment.db' --exclude='newinvestments.db' \
   . | ssh -p "${NAS_PORT}" "${NAS_USER}@${NAS_HOST}" \
     "tar xzf - -C '${NAS_DIR}' && chmod -R a+rX '${NAS_DIR}/frontend/dist' && find '${NAS_DIR}' -name '._*' -delete"
 
@@ -71,14 +72,17 @@ if [ "$MODE" = "initial" ]; then
 fi
 
 # ── 4. Restart the container (optional, needs sudo password) ─────────────────
+# The image is runtime-only (source is a bind mount), so code changes never
+# change the image SHA — `up -d` alone would NOT restart a running container.
+# --force-recreate guarantees the new code is actually loaded.
 if [ -n "${SUDO_PASS:-}" ]; then
   echo "→ Restarting container on NAS ..."
   ssh -p "${NAS_PORT}" "${NAS_USER}@${NAS_HOST}" \
-    "cd '${NAS_DIR}' && printf '%s\\n' '${SUDO_PASS}' | sudo -S /usr/local/bin/docker compose up -d --build"
+    "cd '${NAS_DIR}' && printf '%s\\n' '${SUDO_PASS}' | sudo -S /usr/local/bin/docker compose up -d --build --force-recreate"
 else
   echo "ℹ  SUDO_PASS not set — restart the container manually:"
   echo "   ssh -p ${NAS_PORT} ${NAS_USER}@${NAS_HOST}"
-  echo "   cd ${NAS_DIR} && printf '%s\\n' '<password>' | sudo -S /usr/local/bin/docker compose up -d --build"
+  echo "   cd ${NAS_DIR} && printf '%s\\n' '<password>' | sudo -S /usr/local/bin/docker compose up -d --build --force-recreate"
 fi
 
 echo "✅ Done → http://${NAS_HOST}:8084"
