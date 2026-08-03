@@ -518,10 +518,13 @@ def refresh_nav():
                 nav_date = datetime.strptime(data["last_updated"], "%d-%b-%Y").isoformat()
                 for tbl in ("User1_MF", "User2_MF"):
                     conn.execute(f"""
-                        UPDATE {tbl} SET Previous_NAV=Current_NAV, Current_NAV=?, NAV_Date=?,
-                        Value_now=ROUND(Units * ?, 4)
-                        WHERE AMFI_CODE=?
-                    """, (nav, nav_date, nav, code))
+                        UPDATE {tbl} SET
+                            Previous_NAV = CASE WHEN NAV_Date IS NULL OR NAV_Date != ? THEN Current_NAV ELSE Previous_NAV END,
+                            Current_NAV  = ?,
+                            NAV_Date     = ?,
+                            Value_now    = ROUND(Units * ?, 4)
+                        WHERE AMFI_CODE = ?
+                    """, (nav_date, nav, nav_date, nav, code))
                 conn.commit()
                 updated.append(code)
             except Exception as e:
