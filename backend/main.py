@@ -4,8 +4,10 @@ import logging
 import math
 import os
 import sqlite3
+import threading
+import time
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -188,7 +190,6 @@ def _refresh_nav():
     from mftool import Mftool
     conn = get_conn()
     mft = Mftool()
-    today_iso = date.today().isoformat()
     rows = conn.execute(
         "SELECT DISTINCT AMFI_CODE FROM User1_MF "
         "UNION SELECT DISTINCT AMFI_CODE FROM User2_MF"
@@ -201,19 +202,71 @@ def _refresh_nav():
                 continue
             nav = float(data["nav"])
             nav_date = datetime.strptime(data["last_updated"], "%d-%b-%Y").isoformat()
+            nav_date_str = nav_date[:10]  # YYYY-MM-DD for comparison
             for tbl in ("User1_MF", "User2_MF"):
                 conn.execute(f"""
                     UPDATE {tbl} SET
-                        Previous_NAV = CASE WHEN NAV_Date IS NULL OR substr(NAV_Date, 1, 10) != ? THEN Current_NAV ELSE Previous_NAV END,
+                        Previous_NAV = CASE
+                            WHEN Previous_NAV IS NULL THEN Current_NAV
+                            WHEN NAV_Date IS NULL OR substr(NAV_Date, 1, 10) != ? THEN Current_NAV
+                            ELSE Previous_NAV END,
                         Current_NAV  = ?,
                         NAV_Date     = ?,
                         Value_now    = ROUND(Units * ?, 4)
                     WHERE AMFI_CODE = ?
-                """, (today_iso, nav, nav_date, nav, code))
+                """, (nav_date_str, nav, nav_date, nav, code))
             conn.commit()
         except Exception as e:
             logger.warning("Failed to update NAV for code %s: %s", code, e)
     conn.close()
+
+
+def _backfill_previous_nav():
+    """Set Previous_NAV from AMFI history where it is missing or stale.
+
+    Targets rows where Previous_NAV IS NULL or equals Current_NAV (meaning
+    it was never properly backfilled from the previous trading day).
+    """
+    from mftool import Mftool
+    conn = get_conn()
+    mft = Mftool()
+    backfilled = 0
+    for tbl in ("User1_MF", "User2_MF"):
+        rows = conn.execute(f"""
+            SELECT DISTINCT AMFI_CODE FROM {tbl}
+            WHERE AMFI_CODE IS NOT NULL
+              AND Current_NAV > 0
+              AND (Previous_NAV IS NULL OR Previous_NAV = Current_NAV)
+        """).fetchall()
+        for row in rows:
+            code = row[0]
+            nav_date_row = conn.execute(
+                f"SELECT NAV_Date FROM {tbl} WHERE AMFI_CODE = ? LIMIT 1", (code,)
+            ).fetchone()
+            current_nav_date = (nav_date_row[0] or "")[:10]
+            series = _get_historical_nav(mft, int(code))
+            if not series or len(series) < 2:
+                continue
+            prev_nav = None
+            for item in series[1:5]:
+                try:
+                    d = datetime.strptime(str(item["date"]), "%d-%m-%Y").strftime("%Y-%m-%d")
+                    if d < current_nav_date and float(item["nav"]) > 0:
+                        prev_nav = float(item["nav"])
+                        break
+                except (KeyError, ValueError, TypeError):
+                    continue
+            if prev_nav is not None and prev_nav != (conn.execute(
+                f"SELECT Current_NAV FROM {tbl} WHERE AMFI_CODE = ? LIMIT 1", (code,)
+            ).fetchone() or (None,))[0]:
+                conn.execute(
+                    f"UPDATE {tbl} SET Previous_NAV = ? WHERE AMFI_CODE = ?",
+                    (prev_nav, code),
+                )
+                backfilled += 1
+        conn.commit()
+    conn.close()
+    return backfilled
 
 
 def _refresh_stocks():
@@ -248,6 +301,13 @@ async def lifespan(app: FastAPI):
     # Auto-refresh on startup (runs in background thread so startup isn't blocked)
     async def _auto_refresh():
         loop = asyncio.get_event_loop()
+        logger.info("Backfilling Previous_NAV from AMFI history…")
+        try:
+            n = await loop.run_in_executor(None, _backfill_previous_nav)
+            if n:
+                logger.info("Backfilled Previous_NAV for %d fund(s)", n)
+        except Exception as e:
+            logger.warning("Backfill Previous_NAV failed: %s", e)
         logger.info("Auto-refreshing NAVs on startup…")
         try:
             await loop.run_in_executor(None, _refresh_nav)
@@ -906,6 +966,102 @@ def admin_pf_import_bulk(owner: str, files: list[UploadFile] = File(...)):
         conn.close()
 
 
+# ── TRAILING RETURNS (MF) ─────────────────────────────────────────────────────
+
+RETURN_HORIZONS = [1, 2, 3, 5, 10]
+
+# In-memory TTL cache for historical NAV series.  mftool caches in-memory only
+# per Mftool() instance, so cache here too to avoid re-downloading history from
+# AMFI on every request within the same process.
+_MF_HIST_CACHE: dict[int, tuple[float, list]] = {}
+_MF_HIST_TTL = 24 * 3600
+_MF_HIST_LOCK = threading.Lock()
+
+
+def _get_historical_nav(mft, code: int) -> list | None:
+    """Return the cached AMFI historical NAV series (newest first) or None."""
+    now = time.time()
+    with _MF_HIST_LOCK:
+        cached = _MF_HIST_CACHE.get(code)
+        if cached and now - cached[0] < _MF_HIST_TTL:
+            return cached[1]
+    try:
+        data = mft.get_scheme_historical_nav(int(code))
+        series = (data or {}).get("data") if data else None
+        if not isinstance(series, list) or not series:
+            return None
+    except Exception as e:
+        logger.warning("Failed to fetch history for code %s: %s", code, e)
+        return None
+    with _MF_HIST_LOCK:
+        _MF_HIST_CACHE[code] = (now, series)
+    return series
+
+
+def _trailing_returns(series: list, today: date | None = None) -> dict:
+    """Trailing annualized (CAGR) returns for 1/2/3/5/10 year horizons.
+
+    ``series`` is the AMFI historical NAV list (newest first), each item being
+    {"date": "DD-MM-YYYY", "nav": "xx.xxxxx"}.  Returns a dict mapping horizon
+    keys ('r1y', 'r2y', ...) to CAGR % or None when the fund does not go back
+    far enough.
+    """
+    today = today or date.today()
+    points: list[tuple[date, float]] = []
+    for item in series:
+        try:
+            d = datetime.strptime(str(item["date"]), "%d-%m-%Y").date()
+            nav = float(item["nav"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if nav > 0:
+            points.append((d, nav))
+    result = {f"r{y}y": None for y in RETURN_HORIZONS}
+    if not points:
+        return result
+    points.sort(key=lambda p: p[0])
+    cur_date, cur_nav = points[-1]
+    for years in RETURN_HORIZONS:
+        target = today - timedelta(days=round(365.25 * years))
+        lookback = next((p for p in reversed(points) if p[0] <= target), None)
+        if lookback is None:
+            continue
+        lb_date, lb_nav = lookback
+        days = (cur_date - lb_date).days
+        if lb_nav <= 0 or cur_nav <= 0 or days <= 0:
+            continue
+        cagr = ((cur_nav / lb_nav) ** (365.25 / days) - 1) * 100
+        result[f"r{years}y"] = round(cagr, 2)
+    return result
+
+
+def _build_returns_response(rows) -> list[dict]:
+    """Attach trailing-return horizons to each grouped MF row and append a
+    portfolio-wide value-weighted average row."""
+    data = rows_to_list(rows)
+    from mftool import Mftool
+    mft = Mftool()
+    today = date.today()
+    for r in data:
+        r["invested"] = r["invested"] or 0
+        r["value_now"] = r["value_now"] or 0
+        series = _get_historical_nav(mft, int(r["AMFI_CODE"]))
+        r.update(_trailing_returns(series, today) if series
+                 else {f"r{y}y": None for y in RETURN_HORIZONS})
+    if not data:
+        return data
+    avg = {"AMFI_CODE": None, "Fund_Name": "Portfolio (weighted avg)",
+           "Category": "", "invested": sum(r["invested"] for r in data),
+           "value_now": sum(r["value_now"] for r in data)}
+    for years in RETURN_HORIZONS:
+        key = f"r{years}y"
+        weighted = sum(r["value_now"] * r[key] for r in data if r[key] is not None)
+        weight = sum(r["value_now"] for r in data if r[key] is not None)
+        avg[key] = round(weighted / weight, 2) if weight else None
+    data.append(avg)
+    return data
+
+
 # ── MUTUAL FUNDS ─────────────────────────────────────────────────────────────
 
 @app.get("/api/mutual-funds")
@@ -958,6 +1114,53 @@ def mf_categories():
             r["Returns"]     = round(vn - vc, 2)
             r["Returns_pct"] = round(((vn - vc) / vc) * 100, 2) if vc else 0
         return data
+    finally:
+        conn.close()
+
+
+@app.get("/api/mutual-funds/returns")
+def mf_returns_all():
+    conn = get_conn()
+    try:
+        rows = conn.execute("""
+            SELECT f.AMFI_CODE,
+                   MAX(f.Fund_Name) Fund_Name,
+                   COALESCE(MAX(s.Category), 'Other') Category,
+                   SUM(f.Value_at_cost) invested,
+                   SUM(f.Value_now) value_now
+            FROM (
+                SELECT * FROM User1_MF
+                UNION ALL
+                SELECT * FROM User2_MF
+            ) f
+            LEFT JOIN MF_Summary s ON f.AMFI_CODE = s.AMFI_CODE
+            WHERE f.Fund_Name IS NOT NULL AND TRIM(f.Fund_Name) != ''
+              AND f.AMFI_CODE IS NOT NULL
+            GROUP BY f.AMFI_CODE
+        """).fetchall()
+        return _build_returns_response(rows)
+    finally:
+        conn.close()
+
+
+@app.get("/api/mutual-funds/returns/{owner}")
+def mf_returns_by_owner(owner: str):
+    table = _mf_table(owner)
+    conn = get_conn()
+    try:
+        rows = conn.execute(f"""
+            SELECT f.AMFI_CODE,
+                   MAX(f.Fund_Name) Fund_Name,
+                   COALESCE(MAX(s.Category), 'Other') Category,
+                   SUM(f.Value_at_cost) invested,
+                   SUM(f.Value_now) value_now
+            FROM {table} f
+            LEFT JOIN MF_Summary s ON f.AMFI_CODE = s.AMFI_CODE
+            WHERE f.Fund_Name IS NOT NULL AND TRIM(f.Fund_Name) != ''
+              AND f.AMFI_CODE IS NOT NULL
+            GROUP BY f.AMFI_CODE
+        """).fetchall()
+        return _build_returns_response(rows)
     finally:
         conn.close()
 
@@ -1148,6 +1351,15 @@ def refresh_nav():
     try:
         _refresh_nav()
         return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(500, str(e)) from e
+
+
+@app.post("/api/refresh/backfill-prev-nav", dependencies=[Depends(verify_api_key)])
+def backfill_prev_nav():
+    try:
+        n = _backfill_previous_nav()
+        return {"status": "ok", "backfilled": n}
     except Exception as e:
         raise HTTPException(500, str(e)) from e
 

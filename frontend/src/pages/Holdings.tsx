@@ -18,7 +18,7 @@ import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
 } from 'recharts'
-import { useStocks, useStocksUser1, useStocksUser2, useMutualFunds, useMFUser1, useMFUser2, useMFCategories, usePF, usePFUser1, usePFUser2, usePFConfig, useAdminPFAccounts } from '../hooks/useApi'
+import { useStocks, useStocksUser1, useStocksUser2, useMutualFunds, useMFUser1, useMFUser2, useMFCategories, useMFReturns, usePF, usePFUser1, usePFUser2, usePFConfig, useAdminPFAccounts } from '../hooks/useApi'
 import { StatCard, Spinner, Card, PageHeader, Table, ReturnsCell, PctCell, TabBar } from '../components/UI'
 import { XIRRCard } from '../components/XIRRCard'
 import { calculateXIRR, buildPFCashflows, buildMFCashflows } from '../utils/xirrUtils'
@@ -26,12 +26,23 @@ import { formatINR, CHART_COLORS, CHART_THEME_LIGHT, CHART_THEME_DARK } from '..
 import { exportToCSV } from '../utils/export'
 import { useTheme } from '../hooks/useTheme'
 import { useUsers } from '../hooks/useUsers'
-import type { Stock, MutualFund, PFEntry, PFAccount } from '../hooks/useApi'
+import type { Stock, MutualFund, PFEntry, PFAccount, MFReturnRow } from '../hooks/useApi'
 import { IconSearch, IconDownload } from '@tabler/icons-react'
 import { cn } from '../utils/format'
 
 type PersonTab = 'all' | string
 type OuterTab = 'mf' | 'stocks' | 'pf'
+
+function ReturnPct({ value }: { value: number | null }) {
+  if (value == null) return <span className="text-muted-foreground text-xs font-mono">—</span>
+  const pos = value >= 0
+  return (
+    <span className={`font-mono font-semibold text-xs ${pos ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+      {pos ? '+' : ''}
+      {value.toFixed(2)}%
+    </span>
+  )
+}
 
 // ── MF section ────────────────────────────────────────────────────────────
 function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: PersonTab; setTab: (t: PersonTab) => void }) {
@@ -42,6 +53,7 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
   const { data: user1MF, isLoading: u1L } = useMFUser1()
   const { data: user2MF, isLoading: u2L } = useMFUser2()
   const { data: cats } = useMFCategories()
+  const { data: retData, isLoading: retLoading } = useMFReturns(tab === 'all' ? undefined : tab)
 
   const activeData = tab === 'all' ? allMF : tab === 'user1' ? user1MF : tab === 'user2' ? user2MF : []
   const isLoading = tab === 'all' ? allL : tab === 'user1' ? u1L : tab === 'user2' ? u2L : false
@@ -221,6 +233,26 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
                 : <PctCell value={x * 100} />
             } },
           ]} />
+        )}
+      </Card>
+
+      <Card title="Trailing Returns — Annualized (CAGR)">
+        <p className="text-muted-foreground text-xs mb-4">
+          Returns from the latest AMFI NAV on/before each 1/2/3/5/10-year mark, annualized. A dash means the fund does not go back that far.
+        </p>
+        {retLoading ? <Spinner /> : (
+          <Table<MFReturnRow> data={retData || []} columns={[
+            { key: '_i', label: '#', render: (_r, i) => <span className="text-muted-foreground text-xs font-mono">{i + 1}</span> },
+            { key: 'Fund_Name', label: 'Fund Name', render: (r) => <span className="text-foreground text-xs font-medium">{r.Fund_Name}</span> },
+            { key: 'Category', label: 'Category', render: (r) => <span className="text-muted-foreground text-xs">{r.Category}</span> },
+            { key: 'invested', label: 'Invested', align: 'right', render: (r) => <span className="font-mono text-xs">{formatINR(r.invested)}</span> },
+            { key: 'value_now', label: 'Current Value', align: 'right', render: (r) => <span className="font-mono text-xs">{formatINR(r.value_now)}</span> },
+            { key: 'r1y', label: '1Y', align: 'right', render: (r) => <ReturnPct value={r.r1y} /> },
+            { key: 'r2y', label: '2Y', align: 'right', render: (r) => <ReturnPct value={r.r2y} /> },
+            { key: 'r3y', label: '3Y', align: 'right', render: (r) => <ReturnPct value={r.r3y} /> },
+            { key: 'r5y', label: '5Y', align: 'right', render: (r) => <ReturnPct value={r.r5y} /> },
+            { key: 'r10y', label: '10Y', align: 'right', render: (r) => <ReturnPct value={r.r10y} /> },
+          ]} rowClassName={(r) => (r.AMFI_CODE == null ? 'bg-primary/10' : undefined)} />
         )}
       </Card>
 

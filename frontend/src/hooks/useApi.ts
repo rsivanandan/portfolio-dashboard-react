@@ -127,6 +127,18 @@ export interface MFCategory {
   Returns_pct: number
 }
 
+export interface MFReturnRow {
+  AMFI_CODE: number | null
+  Fund_Name: string
+  Category: string
+  invested: number
+  value_now: number
+  r1y: number | null
+  r2y: number | null
+  r3y: number | null
+  r5y: number | null
+  r10y: number | null
+}
 export interface PFEntry {
   id: number
   owner?: string
@@ -224,6 +236,11 @@ export const useMFUser2 = () =>
   useQuery({ queryKey: ['mf-user2'], queryFn: () => get<MutualFund[]>('/mutual-funds/user2') })
 export const useMFCategories = () =>
   useQuery({ queryKey: ['mf-cats'], queryFn: () => get<MFCategory[]>('/mutual-funds/categories') })
+export const useMFReturns = (owner?: string) =>
+  useQuery({
+    queryKey: ['mf-returns', owner ?? 'all'],
+    queryFn: () => get<MFReturnRow[]>(owner ? `/mutual-funds/returns/${owner}` : '/mutual-funds/returns'),
+  })
 export const useTimeline = () =>
   useQuery({ queryKey: ['timeline'], queryFn: () => get<TimelineItem[]>('/analytics/timeline') })
 export const useMonthly = () =>
