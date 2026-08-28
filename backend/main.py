@@ -162,6 +162,20 @@ def ensure_schema():
             owner TEXT NOT NULL UNIQUE,
             name  TEXT NOT NULL DEFAULT ''
         );
+        CREATE TABLE IF NOT EXISTS Bucket_Assignments (
+            id     INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity TEXT NOT NULL,
+            key    TEXT NOT NULL,
+            owner  TEXT NOT NULL DEFAULT '',
+            bucket TEXT NOT NULL,
+            UNIQUE(entity, key, owner)
+        );
+        CREATE TABLE IF NOT EXISTS Retirement_Config (
+            id           INTEGER PRIMARY KEY CHECK (id = 1),
+            target_now   REAL NOT NULL DEFAULT 40,
+            target_soon  REAL NOT NULL DEFAULT 35,
+            target_later REAL NOT NULL DEFAULT 25
+        );
     """)
     # Add Previous_NAV column to existing tables (ignored if already present)
     for tbl in ("User1_MF", "User2_MF"):
@@ -181,14 +195,64 @@ def ensure_schema():
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN account TEXT DEFAULT ''")
         except sqlite3.OperationalError:
             pass
+    # Add bucket-strategy columns to Retirement_Config (ignored if already present)
+    for col, default in (
+        ("monthly_expenses", 0),
+        ("bucket1_years", 3),
+        ("bucket2_years", 4),
+        ("cash_amount", 0),
+        ("swr_pct", 3.5),
+        ("inflation_pct", 6),
+    ):
+        try:
+            conn.execute(f"ALTER TABLE Retirement_Config ADD COLUMN {col} REAL NOT NULL DEFAULT {default}")
+        except sqlite3.OperationalError:
+            pass
+    conn.execute("INSERT OR IGNORE INTO Retirement_Config (id) VALUES (1)")
     conn.commit()
     conn.close()
+
+
+def get_live_conn():
+    """Connection to the LIVE DB regardless of the demo-mode toggle.
+
+    Market-data refreshes must never write real NAVs/LTPs into the scaled
+    dummy DB (garbage demo returns) nor skip the live DB's daily refresh.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+_navall_cache: dict = {"ts": 0.0, "data": {}}
+
+
+def _navall_lookup(code: int):
+    """Fallback NAV source: parse AMFI's NAVAll.txt taking NAV and date from
+    the END of the line. Some scheme names contain ';' (e.g. 'Edelweiss NIFTY
+    Large Midcap 250 Index Fund;Direct Plan;Growth'), which shifts
+    position-based parsers like mftool — the trailing two fields are reliable.
+    Returns (nav_str, date_str) or None."""
+    import urllib.request
+    now = time.time()
+    if now - _navall_cache["ts"] > 3600 or not _navall_cache["data"]:
+        txt = urllib.request.urlopen(
+            "https://www.amfiindia.com/spages/NAVAll.txt", timeout=30
+        ).read().decode("utf-8", "ignore")
+        data = {}
+        for line in txt.splitlines():
+            parts = line.split(";")
+            if len(parts) >= 6 and parts[0].isdigit():
+                data[int(parts[0])] = (parts[-2], parts[-1])
+        _navall_cache["ts"] = now
+        _navall_cache["data"] = data
+    return _navall_cache["data"].get(code)
 
 
 def _refresh_nav():
     """Refresh all MF NAVs from AMFI.  Safe to call on startup."""
     from mftool import Mftool
-    conn = get_conn()
+    conn = get_live_conn()
     mft = Mftool()
     rows = conn.execute(
         "SELECT DISTINCT AMFI_CODE FROM User1_MF "
@@ -200,8 +264,17 @@ def _refresh_nav():
             data = mft.get_scheme_quote(int(code))
             if not data or "nav" not in data:
                 continue
-            nav = float(data["nav"])
-            nav_date = datetime.strptime(data["last_updated"], "%d-%b-%Y").isoformat()
+            try:
+                nav = float(data["nav"])
+                date_raw = data["last_updated"]
+            except (TypeError, ValueError):
+                # mftool misparses schemes whose names contain ';'
+                fb = _navall_lookup(int(code))
+                if not fb:
+                    continue
+                nav = float(fb[0])
+                date_raw = fb[1]
+            nav_date = datetime.strptime(date_raw, "%d-%b-%Y").isoformat()
             nav_date_str = nav_date[:10]  # YYYY-MM-DD for comparison
             for tbl in ("User1_MF", "User2_MF"):
                 conn.execute(f"""
@@ -228,7 +301,7 @@ def _backfill_previous_nav():
     it was never properly backfilled from the previous trading day).
     """
     from mftool import Mftool
-    conn = get_conn()
+    conn = get_live_conn()
     mft = Mftool()
     backfilled = 0
     for tbl in ("User1_MF", "User2_MF"):
@@ -272,18 +345,26 @@ def _backfill_previous_nav():
 def _refresh_stocks():
     """Refresh all stock LTPs from Yahoo Finance.  Safe to call on startup."""
     import yfinance as yf
-    conn = get_conn()
+    conn = get_live_conn()
     for tbl in ("User1_Stocks", "User2_Stocks"):
         rows = conn.execute(f"SELECT Ticker, Qty FROM {tbl}").fetchall()
         for row in rows:
-            ticker = row["Ticker"].strip()
-            qty    = row["Qty"]
+            # NULL ticker must skip this row, not abort the whole refresh
+            ticker = (row["Ticker"] or "").strip()
+            qty    = row["Qty"] or 0
+            if not ticker:
+                continue
             try:
                 data = yf.download(ticker + ".NS", period="1d", timeout=10,
                                    progress=False, auto_adjust=True)
                 if data.empty:
                     continue
-                ltp      = float(data["Close"].iloc[-1])
+                # Newer yfinance returns MultiIndex columns even for a single
+                # ticker, making data["Close"] a DataFrame — flatten first.
+                close = data["Close"]
+                if hasattr(close, "columns"):
+                    close = close.iloc[:, 0]
+                ltp      = float(close.iloc[-1])
                 value_now = round(qty * ltp, 4)
                 conn.execute(f"UPDATE {tbl} SET LTP=?, Value_now=? WHERE Ticker=?",
                              (ltp, value_now, row["Ticker"]))
@@ -320,7 +401,8 @@ async def lifespan(app: FastAPI):
             logger.warning("Auto-refresh stocks failed: %s", e)
         logger.info("Auto-refresh complete")
 
-    asyncio.create_task(_auto_refresh())
+    # Hold a reference — a bare create_task can be garbage-collected mid-flight
+    app.state.startup_refresh_task = asyncio.create_task(_auto_refresh())
 
     yield
 
@@ -413,9 +495,12 @@ def get_db_mode(current_user: dict = Depends(get_current_user)):
     if dummy_available:
         try:
             conn = sqlite3.connect(DUMMY_PATH)
-            dummy_net_worth = conn.execute(
-                "SELECT COALESCE(SUM(Value_now), 0) FROM User1_MF"
-            ).fetchone()[0]
+            dummy_net_worth = conn.execute("""
+                SELECT COALESCE((SELECT SUM(Value_now) FROM User1_MF), 0)
+                     + COALESCE((SELECT SUM(Value_now) FROM User2_MF), 0)
+                     + COALESCE((SELECT SUM(Value_now) FROM User1_Stocks), 0)
+                     + COALESCE((SELECT SUM(Value_now) FROM User2_Stocks), 0)
+            """).fetchone()[0]
             conn.close()
         except sqlite3.Error:
             dummy_net_worth = None
@@ -682,7 +767,7 @@ def admin_list_pf(owner: str):
         conn.close()
 
 
-@app.post("/api/admin/pf", dependencies=[Depends(verify_api_key)])
+@app.post("/api/admin/pf", dependencies=[Depends(require_admin)])
 def admin_create_pf(entry: PFEntry):
     table = _pf_table(entry.owner)
     conn = get_conn()
@@ -699,7 +784,7 @@ def admin_create_pf(entry: PFEntry):
         conn.close()
 
 
-@app.put("/api/admin/pf/{owner}/{rowid}", dependencies=[Depends(verify_api_key)])
+@app.put("/api/admin/pf/{owner}/{rowid}", dependencies=[Depends(require_admin)])
 def admin_update_pf(owner: str, rowid: int, entry: PFEntry):
     table = _pf_table(owner)
     conn = get_conn()
@@ -719,7 +804,7 @@ def admin_update_pf(owner: str, rowid: int, entry: PFEntry):
         conn.close()
 
 
-@app.delete("/api/admin/pf/{owner}/{rowid}", dependencies=[Depends(verify_api_key)])
+@app.delete("/api/admin/pf/{owner}/{rowid}", dependencies=[Depends(require_admin)])
 def admin_delete_pf(owner: str, rowid: int):
     table = _pf_table(owner)
     conn = get_conn()
@@ -745,7 +830,7 @@ def admin_get_pf_config(owner: str):
         conn.close()
 
 
-@app.put("/api/admin/pf-config/{owner}", dependencies=[Depends(verify_api_key)])
+@app.put("/api/admin/pf-config/{owner}", dependencies=[Depends(require_admin)])
 def admin_set_pf_config(owner: str, cfg: PFConfigModel):
     if owner.lower() not in ("user1", "user2"):
         raise HTTPException(400, "owner must be 'user1' or 'user2'")
@@ -821,7 +906,7 @@ def admin_get_pf_accounts(owner: str):
         conn.close()
 
 
-@app.put("/api/admin/pf-accounts/{owner}", dependencies=[Depends(verify_api_key)])
+@app.put("/api/admin/pf-accounts/{owner}", dependencies=[Depends(require_admin)])
 def admin_set_pf_account(owner: str, acct: PFAccountModel):
     if owner.lower() != acct.owner.lower():
         raise HTTPException(400, "owner mismatch")
@@ -846,7 +931,7 @@ def admin_set_pf_account(owner: str, acct: PFAccountModel):
         conn.close()
 
 
-@app.delete("/api/admin/pf-accounts/{owner}/{account}", dependencies=[Depends(verify_api_key)])
+@app.delete("/api/admin/pf-accounts/{owner}/{account}", dependencies=[Depends(require_admin)])
 def admin_delete_pf_account(owner: str, account: str):
     conn = get_conn()
     try:
@@ -869,6 +954,23 @@ def _parse_pdf_or_400(file: UploadFile):
 
 
 def _upsert_pf_rows(conn, table: str, rows: list[dict]):
+    # Passbooks can legitimately carry two rows for the same (account, month,
+    # notes) — arrears / split remittances. The upsert key would collapse them
+    # (second row UPDATEs the first), silently losing a contribution. Merge
+    # such rows by summing their amounts BEFORE upserting, so re-imports stay
+    # idempotent without dropping money.
+    merged: dict[tuple, dict] = {}
+    for r in rows:
+        key = (r["account"], r["entry_date"], r["notes"])
+        if key in merged:
+            m = merged[key]
+            m["employee_contrib"] += r["employee_contrib"]
+            m["employer_contrib"] += r["employer_contrib"]
+            m["interest"] += r["interest"]
+        else:
+            merged[key] = dict(r)
+    rows = list(merged.values())
+
     inserted = 0
     updated = 0
     for r in rows:
@@ -896,7 +998,7 @@ def _upsert_pf_rows(conn, table: str, rows: list[dict]):
     return inserted, updated
 
 
-@app.post("/api/admin/pf-import/preview/{owner}", dependencies=[Depends(verify_api_key)])
+@app.post("/api/admin/pf-import/preview/{owner}", dependencies=[Depends(require_admin)])
 def admin_pf_import_preview(owner: str, file: UploadFile = File(...)):
     _pf_table(owner)
     meta, rows, warnings = _parse_pdf_or_400(file)
@@ -908,7 +1010,7 @@ def admin_pf_import_preview(owner: str, file: UploadFile = File(...)):
     }
 
 
-@app.post("/api/admin/pf-import/{owner}", dependencies=[Depends(verify_api_key)])
+@app.post("/api/admin/pf-import/{owner}", dependencies=[Depends(require_admin)])
 def admin_pf_import(owner: str, file: UploadFile = File(...)):
     table = _pf_table(owner)
     meta, rows, warnings = _parse_pdf_or_400(file)
@@ -930,7 +1032,7 @@ def admin_pf_import(owner: str, file: UploadFile = File(...)):
         conn.close()
 
 
-@app.post("/api/admin/pf-import/bulk/{owner}", dependencies=[Depends(verify_api_key)])
+@app.post("/api/admin/pf-import/bulk/{owner}", dependencies=[Depends(require_admin)])
 def admin_pf_import_bulk(owner: str, files: list[UploadFile] = File(...)):
     table = _pf_table(owner)
     conn = get_conn()
@@ -1375,12 +1477,20 @@ def amfi_lookup(code: int):
         if not data or "nav" not in data:
             raise HTTPException(404, f"Scheme {code} not found")
         scheme_name = data.get("scheme_name", "")
+        try:
+            nav = float(data["nav"])
+            nav_date = data.get("last_updated", "")
+        except (TypeError, ValueError):
+            fb = _navall_lookup(code)
+            if not fb:
+                raise HTTPException(404, f"Scheme {code} NAV unavailable")
+            nav, nav_date = float(fb[0]), fb[1]
         return {
             "AMFI_CODE": code,
             "Fund_Name": scheme_name,
             "Fund_House": scheme_name.split(" ")[0] if scheme_name else "",
-            "Current_NAV": float(data["nav"]),
-            "NAV_Date": data.get("last_updated", ""),
+            "Current_NAV": nav,
+            "NAV_Date": nav_date,
         }
     except HTTPException:
         raise
@@ -1434,7 +1544,7 @@ def admin_list_mf(owner: str):
         conn.close()
 
 
-@app.post("/api/admin/mf", dependencies=[Depends(verify_api_key)])
+@app.post("/api/admin/mf", dependencies=[Depends(require_admin)])
 def admin_create_mf(entry: MFEntry):
     table = _mf_table(entry.owner)
     conn = get_conn()
@@ -1453,7 +1563,7 @@ def admin_create_mf(entry: MFEntry):
         conn.close()
 
 
-@app.put("/api/admin/mf/{owner}/{rowid}", dependencies=[Depends(verify_api_key)])
+@app.put("/api/admin/mf/{owner}/{rowid}", dependencies=[Depends(require_admin)])
 def admin_update_mf(owner: str, rowid: int, entry: MFEntry):
     table = _mf_table(owner)
     conn = get_conn()
@@ -1475,7 +1585,7 @@ def admin_update_mf(owner: str, rowid: int, entry: MFEntry):
         conn.close()
 
 
-@app.delete("/api/admin/mf/{owner}/{rowid}", dependencies=[Depends(verify_api_key)])
+@app.delete("/api/admin/mf/{owner}/{rowid}", dependencies=[Depends(require_admin)])
 def admin_delete_mf(owner: str, rowid: int):
     table = _mf_table(owner)
     conn = get_conn()
@@ -1487,9 +1597,247 @@ def admin_delete_mf(owner: str, rowid: int):
         conn.close()
 
 
+# ── RETIREMENT: 3-BUCKET STRATEGY ────────────────────────────────────────────
+
+VALID_BUCKETS = ("cash", "safety", "growth")
+
+
+class RetirementConfigRequest(BaseModel):
+    swr_pct: float
+    inflation_pct: float
+    bucket1_years: float
+    bucket2_years: float
+    cash_amount: float
+
+
+class BucketAssignRequest(BaseModel):
+    entity: str
+    key: str
+    bucket: str
+
+
+def _default_bucket(entity: str, category: str | None) -> str:
+    if entity == "pf":
+        return "cash"
+    if entity == "mf" and (category or "").lower() == "debt":
+        return "safety"
+    return "growth"
+
+
+@app.get("/api/retirement")
+def retirement():
+    conn = get_conn()
+    try:
+        cfg = conn.execute(
+            "SELECT swr_pct, inflation_pct, bucket1_years, bucket2_years, cash_amount "
+            "FROM Retirement_Config WHERE id = 1"
+        ).fetchone()
+        config = dict(cfg) if cfg else {
+            "swr_pct": 3.5, "inflation_pct": 6, "bucket1_years": 3, "bucket2_years": 4, "cash_amount": 0,
+        }
+
+        assignments = {
+            (r["entity"], r["key"]): r["bucket"]
+            for r in conn.execute("SELECT entity, key, bucket FROM Bucket_Assignments")
+        }
+
+        holdings = []
+
+        mf_rows = conn.execute("""
+            SELECT m.AMFI_CODE, MAX(m.Fund_Name) Fund_Name,
+                   COALESCE(MAX(s.Category), 'Other') Category,
+                   SUM(m.Value_now) Value_now
+            FROM (
+                SELECT AMFI_CODE, Fund_Name, Value_now FROM User1_MF
+                UNION ALL
+                SELECT AMFI_CODE, Fund_Name, Value_now FROM User2_MF
+            ) m
+            LEFT JOIN MF_Summary s ON s.AMFI_CODE = m.AMFI_CODE
+            WHERE m.AMFI_CODE IS NOT NULL
+            GROUP BY m.AMFI_CODE
+        """).fetchall()
+        for r in mf_rows:
+            key = str(int(r["AMFI_CODE"]))
+            holdings.append({
+                "entity": "mf",
+                "key": key,
+                "name": r["Fund_Name"],
+                "category": r["Category"],
+                "value": round(r["Value_now"] or 0, 2),
+                "bucket": assignments.get(("mf", key)) or _default_bucket("mf", r["Category"]),
+            })
+
+        stock_rows = conn.execute("""
+            SELECT Ticker, MAX(Instrument) Instrument, SUM(Value_now) Value_now
+            FROM (
+                SELECT Ticker, Instrument, Value_now FROM User1_Stocks
+                UNION ALL
+                SELECT Ticker, Instrument, Value_now FROM User2_Stocks
+            )
+            GROUP BY Ticker
+        """).fetchall()
+        for r in stock_rows:
+            holdings.append({
+                "entity": "stock",
+                "key": r["Ticker"],
+                "name": r["Instrument"] or r["Ticker"],
+                "category": "Stock",
+                "value": round(r["Value_now"] or 0, 2),
+                "bucket": assignments.get(("stock", r["Ticker"])) or _default_bucket("stock", None),
+            })
+
+        for owner in ("user1", "user2"):
+            tbl = _pf_table(owner)
+            row = conn.execute(
+                f"SELECT SUM(employee_contrib + employer_contrib + interest) v FROM {tbl}"
+            ).fetchone()
+            pf_value = (row["v"] or 0) + _get_pf_opening(conn, owner)
+            if pf_value <= 0:
+                continue
+            holdings.append({
+                "entity": "pf",
+                "key": owner,
+                "name": f"Provident Fund ({owner})",
+                "category": "PF",
+                "value": round(pf_value, 2),
+                "bucket": assignments.get(("pf", owner)) or _default_bucket("pf", None),
+            })
+
+        # Affordable spend is derived from the corpus itself: swr_pct% per year
+        # of the total corpus on this date — so targets grow with the corpus.
+        corpus = (config["cash_amount"] or 0) + sum(h["value"] for h in holdings)
+        annual = corpus * (config["swr_pct"] or 0) / 100
+
+        # Waterfall allocation: money pours into Bucket 1 until its tenure
+        # target is met, overflows into Bucket 2 until its target is met, and
+        # the remainder lands in Growth.  A holding's assigned bucket only
+        # sets its pour priority; a single holding can straddle two buckets.
+        # Each covered year is inflated: Bucket 1 covers years 1..y1, Bucket 2
+        # the years after that (y1+1..y1+y2), so its target inflates further.
+        infl = (config["inflation_pct"] or 0) / 100
+        y1 = int(round(config["bucket1_years"]))
+        y2 = int(round(config["bucket2_years"]))
+        targets = {
+            "cash": annual * sum((1 + infl) ** k for k in range(0, y1)),
+            "safety": annual * sum((1 + infl) ** k for k in range(y1, y1 + y2)),
+            "growth": None,
+        }
+        priority = {"cash": 0, "safety": 1, "growth": 2}
+        pool = []
+        if (config["cash_amount"] or 0) > 0:
+            pool.append({"entity": "cash", "key": "manual", "name": "Cash / FD on hand",
+                         "value": config["cash_amount"], "bucket": "cash"})
+        pool += sorted(holdings, key=lambda h: (priority[h["bucket"]], -h["value"]))
+
+        slices = {b: [] for b in VALID_BUCKETS}
+        actuals = {b: 0.0 for b in VALID_BUCKETS}
+        level = 0  # index into VALID_BUCKETS: current bucket being filled
+        for h in pool:
+            remaining = h["value"]
+            while remaining > 0.005:
+                b = VALID_BUCKETS[level]
+                room = math.inf if targets[b] is None else max(targets[b] - actuals[b], 0)
+                take = min(remaining, room)
+                if take > 0.005:
+                    slices[b].append({
+                        "entity": h["entity"], "key": h["key"], "name": h["name"],
+                        "amount": round(take, 2), "partial": take < h["value"] - 0.005,
+                        "priority": h["bucket"],
+                    })
+                    actuals[b] += take
+                    remaining -= take
+                if targets[b] is not None and actuals[b] >= targets[b] - 0.005:
+                    level = min(level + 1, len(VALID_BUCKETS) - 1)
+                elif remaining > 0.005:
+                    break  # growth is bottomless; shouldn't happen
+
+        # Years of (inflated) spending each bucket covers, from the year that
+        # bucket takes over: B1 covers years 1..y1, B2 starts after B1, growth
+        # after B2 — so later buckets face costlier years.
+        def _years_covered(amount: float, start_year: int) -> float | None:
+            if annual <= 0:
+                return None
+            yrs, k = 0.0, start_year
+            while amount > 0.005 and yrs < 100:
+                cost = annual * (1 + infl) ** k
+                if amount >= cost:
+                    yrs += 1
+                    amount -= cost
+                    k += 1
+                else:
+                    yrs += amount / cost
+                    break
+            return round(yrs, 1)
+
+        start_year = {"cash": 0, "safety": y1, "growth": y1 + y2}
+        buckets = {
+            b: {
+                "actual": round(actuals[b], 2),
+                "target": round(targets[b], 2) if targets[b] is not None else None,
+                "slices": slices[b],
+                "years_covered": _years_covered(actuals[b], start_year[b]),
+            }
+            for b in VALID_BUCKETS
+        }
+        return {
+            "config": config,
+            "holdings": holdings,
+            "buckets": buckets,
+            "corpus": round(corpus, 2),
+            "annual_affordable": round(annual, 2),
+            "monthly_affordable": round(annual / 12, 2),
+        }
+    finally:
+        conn.close()
+
+
+@app.put("/api/retirement/config", dependencies=[Depends(verify_api_key)])
+def update_retirement_config(req: RetirementConfigRequest):
+    if req.cash_amount < 0:
+        raise HTTPException(400, "cash amount must be >= 0")
+    # Bounds match what the model can sensibly represent: beyond these, the
+    # combined bucket targets can exceed the corpus many times over.
+    if not (0 < req.swr_pct <= 5):
+        raise HTTPException(400, "withdrawal rate must be between 0 and 5%")
+    if not (0 <= req.inflation_pct <= 10):
+        raise HTTPException(400, "inflation must be between 0 and 10%")
+    if not (0 < req.bucket1_years <= 5 and 0 < req.bucket2_years <= 8):
+        raise HTTPException(400, "bucket years out of range")
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE Retirement_Config SET swr_pct = ?, inflation_pct = ?, bucket1_years = ?, "
+            "bucket2_years = ?, cash_amount = ? WHERE id = 1",
+            (req.swr_pct, req.inflation_pct, req.bucket1_years, req.bucket2_years, req.cash_amount),
+        )
+        conn.commit()
+        return {"status": "ok"}
+    finally:
+        conn.close()
+
+
+@app.put("/api/retirement/assign", dependencies=[Depends(verify_api_key)])
+def assign_bucket(req: BucketAssignRequest):
+    if req.bucket not in VALID_BUCKETS:
+        raise HTTPException(400, f"bucket must be one of {VALID_BUCKETS}")
+    if req.entity not in ("mf", "stock", "pf"):
+        raise HTTPException(400, "entity must be 'mf', 'stock', or 'pf'")
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO Bucket_Assignments (entity, key, owner, bucket) VALUES (?, ?, '', ?) "
+            "ON CONFLICT(entity, key, owner) DO UPDATE SET bucket = excluded.bucket",
+            (req.entity, req.key, req.bucket),
+        )
+        conn.commit()
+        return {"status": "ok"}
+    finally:
+        conn.close()
+
+
 # ── ADMIN: STOCKS UPLOAD ─────────────────────────────────────────────────────
 
-@app.post("/api/admin/upload-stocks/{owner}", dependencies=[Depends(verify_api_key)])
+@app.post("/api/admin/upload-stocks/{owner}", dependencies=[Depends(require_admin)])
 def upload_stocks(owner: str, file: UploadFile = File(...)):
     table = _stock_table(owner)
 
@@ -1573,13 +1921,23 @@ def upload_stocks(owner: str, file: UploadFile = File(...)):
         if "Instrument" not in df.columns:
             df["Instrument"] = df["Ticker"]
 
+        # Coerce remaining numeric columns too — a single unbindable cell must
+        # not be able to abort the insert batch.
+        for col in ("Qty", "Purchase_cost", "Value_at_cost"):
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
         final = df[["Ticker", "Instrument", "Qty", "Purchase_cost", "LTP", "Value_now", "Value_at_cost"]]
 
         conn = get_conn()
         try:
+            # Explicit transaction: sqlite3 runs DDL in autocommit by default,
+            # which made the DROP durable before the inserts — a failed upload
+            # destroyed the table. BEGIN makes drop+create+insert atomic.
+            conn.execute("BEGIN")
             conn.execute(f"DROP TABLE IF EXISTS {table}")
             conn.execute(f"""
                 CREATE TABLE {table} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     Ticker TEXT, Instrument TEXT, Qty REAL,
                     Purchase_cost REAL, LTP REAL, Value_now REAL, Value_at_cost REAL
                 )
@@ -1589,6 +1947,9 @@ def upload_stocks(owner: str, file: UploadFile = File(...)):
                 final.values.tolist(),
             )
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 

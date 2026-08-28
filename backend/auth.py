@@ -25,8 +25,35 @@ from pydantic import BaseModel, EmailStr, field_validator
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "investments.db")
 
-_secret_env = os.environ.get("JWT_SECRET", "")
-JWT_SECRET: str = _secret_env if _secret_env else os.urandom(32).hex()
+def _load_or_create_secret() -> str:
+    """JWT signing secret: env var wins; otherwise persist a generated one so
+    every worker process shares it and restarts don't invalidate sessions."""
+    env = os.environ.get("JWT_SECRET", "")
+    if env:
+        return env
+    secret_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".jwt_secret")
+    try:
+        with open(secret_file, encoding="utf-8") as fh:
+            existing = fh.read().strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+    secret = os.urandom(32).hex()
+    try:
+        fd = os.open(secret_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(secret)
+    except FileExistsError:
+        # Another worker won the race — use its secret.
+        with open(secret_file, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        pass  # unwritable dir: fall back to per-process secret
+    return secret
+
+
+JWT_SECRET: str = _load_or_create_secret()
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 REFRESH_TOKEN_EXPIRE_DAYS = 7

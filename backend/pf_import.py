@@ -46,7 +46,9 @@ ROW_STUB_RE = re.compile(r"^([A-Z][a-z]{2})-(\d{4})\s+\d{2}-\d{2}-\d{4}\s+(CR|DR
 INTEREST_RE = re.compile(r"^(Int\.|Interest details)")
 DATE_RE = re.compile(r"(\d{2})/(\d{2})/(\d{4})")
 NUM_RE = re.compile(r"\d[\d,\.]*")
-ACCOUNT_RE = re.compile(r"BGBNG\d{17}")
+# EPFO member IDs: 5-letter regional office code + 17 digits (BGBNG = Bengaluru,
+# PYKRP = Puducherry, etc.) — must not be pinned to one office.
+ACCOUNT_RE = re.compile(r"[A-Z]{5}\d{17}")
 
 
 def _num(token: str) -> float | None:

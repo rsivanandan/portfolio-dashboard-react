@@ -75,7 +75,8 @@ def main():
                        ("User2_Stocks", "Value_now")]:
         s = _sum(SRC, table, col)
         d = _sum(DST, table, col)
-        print(f"{table}.{col}: {s:,.2f} -> {d:,.2f}  (x{d/s:.1f})")
+        ratio = f"x{d/s:.1f}" if s else "empty source"
+        print(f"{table}.{col}: {s:,.2f} -> {d:,.2f}  ({ratio})")
 
     pf = _sum(DST, "User1_PF", "employee_contrib")
     pf2 = _sum(DST, "User2_PF", "employee_contrib")
