@@ -572,6 +572,17 @@ export interface RetirementConfig {
   bucket1_years: number
   bucket2_years: number
   cash_amount: number
+  refill_trigger_years: number
+}
+
+export interface RefillSignal {
+  nifty_12m_pct: number | null
+  market: 'up' | 'down' | null
+  source: 'growth' | 'safety' | null
+  trigger_years: number
+  b1_years: number | null
+  action_needed: boolean
+  topup_amount: number
 }
 
 export interface BucketHolding {
@@ -600,6 +611,7 @@ export interface RetirementData {
   corpus: number
   annual_affordable: number
   monthly_affordable: number
+  refill: RefillSignal
 }
 
 export const useRetirement = () =>

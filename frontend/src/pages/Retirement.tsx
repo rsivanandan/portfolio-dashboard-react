@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   useRetirement, useUpdateRetirementConfig, useAssignBucket,
-  type BucketName, type BucketHolding, type BucketSlice, type RetirementConfig,
+  type BucketName, type BucketHolding, type BucketSlice, type RetirementConfig, type RefillSignal,
 } from '../hooks/useApi'
 import { Spinner, Card, PageHeader, Table, Btn } from '../components/UI'
 import { useToast } from '../components/Toast'
@@ -154,6 +154,7 @@ function ConfigCard({ config }: { config: RetirementConfig }) {
         cash_amount: parseFloat(cash || '0'),
         bucket1_years: b1Years,
         bucket2_years: b2Years,
+        refill_trigger_years: config.refill_trigger_years,
       },
       {
         onSuccess: () => toast('Retirement plan saved', 'success'),
@@ -359,6 +360,78 @@ function BucketVisual({
               )}
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Refill strategy panel — sits beside the buckets ─────────────────────────
+function RefillPanel({ refill, config }: { refill: RefillSignal; config: RetirementConfig }) {
+  const { toast } = useToast()
+  const update = useUpdateRetirementConfig()
+
+  const setTrigger = (yrs: number) => {
+    update.mutate(
+      { ...config, refill_trigger_years: yrs },
+      { onError: () => toast('Failed to save refill trigger', 'error') },
+    )
+  }
+
+  const marketKnown = refill.market != null
+  const fromGrowth = refill.source === 'growth'
+
+  return (
+    <div className="rounded-xl border border-border bg-card/60 px-4 py-3.5">
+      <div className="text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground mb-2">
+        Refill Strategy
+      </div>
+
+      {/* Market gate */}
+      <div className="text-[11px] leading-snug mb-2">
+        {marketKnown ? (
+          <>
+            <span className="text-muted-foreground">NIFTY 12m </span>
+            <span className={cn('font-mono font-semibold', refill.market === 'up' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
+              {refill.nifty_12m_pct != null && refill.nifty_12m_pct >= 0 ? '+' : ''}{refill.nifty_12m_pct?.toFixed(1)}%
+            </span>
+            <span className="block mt-0.5 text-foreground font-medium">
+              {fromGrowth ? 'Refill from Growth — harvest gains' : 'Refill from Safety — don’t sell equity'}
+            </span>
+          </>
+        ) : (
+          <span className="text-muted-foreground">Market signal unavailable</span>
+        )}
+      </div>
+
+      {/* Action status */}
+      <div className={cn(
+        'text-[11px] leading-snug rounded-lg px-2.5 py-2 mb-2.5 border',
+        refill.action_needed
+          ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300'
+          : 'border-emerald-200 bg-emerald-50/60 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-400',
+      )}>
+        {refill.action_needed ? (
+          <>⚠ Bucket 1 at {refill.b1_years} yrs (below {refill.trigger_years}) — top up {formatINR(refill.topup_amount)}{refill.source ? ` from ${refill.source === 'growth' ? 'Growth' : 'Safety'}` : ''}</>
+        ) : (
+          <>✓ No action — Bucket 1 covers {refill.b1_years ?? '—'} yrs (trigger &lt; {refill.trigger_years})</>
+        )}
+      </div>
+
+      {/* Trigger selector */}
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Trigger</span>
+        <div className="inline-flex rounded-lg border border-border overflow-hidden text-[11px]">
+          {[1, 1.5, 2].map((y) => (
+            <button
+              key={y}
+              onClick={() => setTrigger(y)}
+              disabled={update.isPending}
+              className={cn('px-2 py-1 transition-all', config.refill_trigger_years === y ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:text-foreground')}
+            >
+              {y} yr
+            </button>
+          ))}
         </div>
       </div>
     </div>
@@ -609,19 +682,22 @@ export default function Retirement() {
               ))}
             </div>
 
-            {/* Right — affordable spend */}
-            <div className="lg:w-44 shrink-0 rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/40 px-4 py-3.5 text-center">
-              <div className="text-[10px] font-semibold tracking-[0.08em] uppercase text-emerald-700 dark:text-emerald-400">Affordable Spend</div>
-              <div className="mt-1 text-2xl font-bold leading-none text-emerald-700 dark:text-emerald-300">{formatINR(data.monthly_affordable)}</div>
-              <div className="mt-0.5 text-[11px] text-emerald-700/80 dark:text-emerald-400/80 font-medium">per month</div>
-              <div className="mt-2 pt-2 border-t border-emerald-200/70 dark:border-emerald-900/70 flex items-center justify-between text-[11px]">
-                <span className="text-muted-foreground">per year</span>
-                <span className="font-mono font-semibold text-foreground">{formatINR(annual)}</span>
+            {/* Right — affordable spend + refill strategy */}
+            <div className="lg:w-52 shrink-0 flex flex-col gap-3">
+              <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/40 px-4 py-3.5 text-center">
+                <div className="text-[10px] font-semibold tracking-[0.08em] uppercase text-emerald-700 dark:text-emerald-400">Affordable Spend</div>
+                <div className="mt-1 text-2xl font-bold leading-none text-emerald-700 dark:text-emerald-300">{formatINR(data.monthly_affordable)}</div>
+                <div className="mt-0.5 text-[11px] text-emerald-700/80 dark:text-emerald-400/80 font-medium">per month</div>
+                <div className="mt-2 pt-2 border-t border-emerald-200/70 dark:border-emerald-900/70 flex items-center justify-between text-[11px]">
+                  <span className="text-muted-foreground">per year</span>
+                  <span className="font-mono font-semibold text-foreground">{formatINR(annual)}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-[11px]">
+                  <span className="text-muted-foreground">withdrawal</span>
+                  <span className="font-mono font-semibold text-foreground">{config.swr_pct}%/yr</span>
+                </div>
               </div>
-              <div className="mt-1 flex items-center justify-between text-[11px]">
-                <span className="text-muted-foreground">withdrawal</span>
-                <span className="font-mono font-semibold text-foreground">{config.swr_pct}%/yr</span>
-              </div>
+              <RefillPanel refill={data.refill} config={config} />
             </div>
           </div>
         </Card>

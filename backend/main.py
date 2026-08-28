@@ -216,6 +216,7 @@ def _ensure_schema_for(db_path: str):
         ("cash_amount", 0),
         ("swr_pct", 3.5),
         ("inflation_pct", 6),
+        ("refill_trigger_years", 2),
     ):
         try:
             conn.execute(f"ALTER TABLE Retirement_Config ADD COLUMN {col} REAL NOT NULL DEFAULT {default}")
@@ -235,6 +236,35 @@ def get_live_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+_nifty_12m_cache: dict = {"ts": 0.0, "pct": None}
+
+
+def _nifty_12m_return():
+    """Trailing 12-month NIFTY return (%), cached for an hour.
+
+    Market gate for the bucket refill strategy: positive → harvest from
+    Growth; negative → draw from Safety and leave equity alone.
+    Returns None when the fetch fails (UI shows 'unavailable').
+    """
+    now = time.time()
+    if now - _nifty_12m_cache["ts"] < 3600:
+        return _nifty_12m_cache["pct"]
+    pct = None
+    try:
+        import yfinance as yf
+        hist = yf.Ticker("^NSEI").history(period="1y", interval="1d")
+        if len(hist) > 1:
+            first = float(hist["Close"].iloc[0])
+            last = float(hist["Close"].iloc[-1])
+            if first > 0:
+                pct = round((last / first - 1) * 100, 2)
+    except Exception as exc:
+        logger.warning("nifty 12m fetch failed: %s", exc)
+    _nifty_12m_cache["ts"] = now
+    _nifty_12m_cache["pct"] = pct
+    return pct
 
 
 _navall_cache: dict = {"ts": 0.0, "data": {}}
@@ -1621,6 +1651,7 @@ class RetirementConfigRequest(BaseModel):
     bucket1_years: float
     bucket2_years: float
     cash_amount: float
+    refill_trigger_years: float = 2
 
 
 class BucketAssignRequest(BaseModel):
@@ -1642,11 +1673,12 @@ def retirement():
     conn = get_conn()
     try:
         cfg = conn.execute(
-            "SELECT swr_pct, inflation_pct, bucket1_years, bucket2_years, cash_amount "
+            "SELECT swr_pct, inflation_pct, bucket1_years, bucket2_years, cash_amount, refill_trigger_years "
             "FROM Retirement_Config WHERE id = 1"
         ).fetchone()
         config = dict(cfg) if cfg else {
-            "swr_pct": 3.5, "inflation_pct": 6, "bucket1_years": 3, "bucket2_years": 4, "cash_amount": 0,
+            "swr_pct": 3.5, "inflation_pct": 6, "bucket1_years": 3, "bucket2_years": 4,
+            "cash_amount": 0, "refill_trigger_years": 2,
         }
 
         assignments = {
@@ -1792,6 +1824,16 @@ def retirement():
             }
             for b in VALID_BUCKETS
         }
+        # Refill strategy: when Bucket 1 falls below the trigger, top it up —
+        # from Growth when equity is up over 12 months, else from Safety.
+        nifty_12m = _nifty_12m_return()
+        market = None if nifty_12m is None else ("up" if nifty_12m >= 0 else "down")
+        source = None if market is None else ("growth" if market == "up" else "safety")
+        b1_years = buckets["cash"]["years_covered"]
+        trigger = config["refill_trigger_years"] or 2
+        action_needed = b1_years is not None and b1_years < trigger
+        topup = round(max(targets["cash"] - actuals["cash"], 0), 2) if action_needed else 0
+
         return {
             "config": config,
             "holdings": holdings,
@@ -1799,6 +1841,15 @@ def retirement():
             "corpus": round(corpus, 2),
             "annual_affordable": round(annual, 2),
             "monthly_affordable": round(annual / 12, 2),
+            "refill": {
+                "nifty_12m_pct": nifty_12m,
+                "market": market,
+                "source": source,
+                "trigger_years": trigger,
+                "b1_years": b1_years,
+                "action_needed": action_needed,
+                "topup_amount": topup,
+            },
         }
     finally:
         conn.close()
@@ -1816,12 +1867,15 @@ def update_retirement_config(req: RetirementConfigRequest):
         raise HTTPException(400, "inflation must be between 0 and 10%")
     if not (0 < req.bucket1_years <= 5 and 0 < req.bucket2_years <= 8):
         raise HTTPException(400, "bucket years out of range")
+    if not (0 < req.refill_trigger_years <= req.bucket1_years):
+        raise HTTPException(400, "refill trigger must be between 0 and the Bucket 1 horizon")
     conn = get_conn()
     try:
         conn.execute(
             "UPDATE Retirement_Config SET swr_pct = ?, inflation_pct = ?, bucket1_years = ?, "
-            "bucket2_years = ?, cash_amount = ? WHERE id = 1",
-            (req.swr_pct, req.inflation_pct, req.bucket1_years, req.bucket2_years, req.cash_amount),
+            "bucket2_years = ?, cash_amount = ?, refill_trigger_years = ? WHERE id = 1",
+            (req.swr_pct, req.inflation_pct, req.bucket1_years, req.bucket2_years,
+             req.cash_amount, req.refill_trigger_years),
         )
         conn.commit()
         return {"status": "ok"}
