@@ -61,6 +61,8 @@ COPYFILE_DISABLE=1 tar czf - \
   --exclude='./docker-compose.yml' \
   --exclude='*.db.bak*' \
   --exclude='investments.db' --exclude='demoinvestment.db' --exclude='newinvestments.db' \
+  --exclude='latest.db' \
+  --exclude='.jwt_secret' \
   . | ssh -p "${NAS_PORT}" "${NAS_USER}@${NAS_HOST}" \
     "tar xzf - -C '${NAS_DIR}' && chmod -R a+rX '${NAS_DIR}/frontend/dist' && find '${NAS_DIR}' -name '._*' -delete"
 
