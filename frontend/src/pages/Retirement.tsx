@@ -370,7 +370,7 @@ const GOAL_RATES = [0.08, 0.10, 0.12, 0.14]
 const GOAL_MONTHLY_KEY = 'retirement.targetMonthly'
 const GOAL_RATE_KEY = 'retirement.rate'
 
-function RetirementGoal({ corpus, swrPct, inflationPct }: { corpus: number; swrPct: number; inflationPct: number }) {
+function RetirementGoal({ corpus, swrPct }: { corpus: number; swrPct: number }) {
   const [rate, setRate] = useState<number>(() => {
     const stored = localStorage.getItem(GOAL_RATE_KEY)
     const v = stored ? parseFloat(stored) : NaN
@@ -382,19 +382,16 @@ function RetirementGoal({ corpus, swrPct, inflationPct }: { corpus: number; swrP
     return Number.isFinite(v) && v > 0 ? Math.round(v) : 360_000
   })
   const swr = swrPct / 100
-  const inflation = inflationPct / 100
-  // Target corpus and target monthly are both in TODAY'S rupees, so growth
-  // toward the goal must be measured at the REAL rate (nominal minus
-  // inflation) — using the nominal rate would overstate progress.
-  const realRate = (1 + rate) / (1 + inflation) - 1
+  // Accumulation phase is NOMINAL by design: the target monthly is the amount
+  // to withdraw at retirement, not today's purchasing power. Inflation enters
+  // only in the utilization phase — the bucket tenure targets handle it.
   const targetCorpus = targetMonthly > 0 && swr > 0 ? (targetMonthly * 12) / swr : 0
   const pct = targetCorpus > 0 ? Math.min((corpus / targetCorpus) * 100, 100) : 0
   const remaining = Math.max(targetCorpus - corpus, 0)
   const currentMonthly = (corpus * swr) / 12
-  const yearsToGo = corpus > 0 && targetCorpus > corpus && realRate > 0.0005
-    ? Math.log(targetCorpus / corpus) / Math.log(1 + realRate)
+  const yearsToGo = corpus > 0 && targetCorpus > corpus
+    ? Math.log(targetCorpus / corpus) / Math.log(1 + rate)
     : 0
-  const unreachable = corpus > 0 && targetCorpus > corpus && realRate <= 0.0005
 
   return (
     <Card title="Retirement Goal">
@@ -410,17 +407,12 @@ function RetirementGoal({ corpus, swrPct, inflationPct }: { corpus: number; swrP
               <div className="text-2xl font-bold text-foreground">{formatINR(targetCorpus)}</div>
               {yearsToGo > 0 && (
                 <div className="text-xs text-indigo-600 dark:text-indigo-400 mt-0.5">
-                  ~{yearsToGo.toFixed(1)} yrs at {(rate * 100).toFixed(0)}% ({(realRate * 100).toFixed(1)}% real after {inflationPct}% inflation)
-                </div>
-              )}
-              {unreachable && (
-                <div className="text-xs text-rose-600 dark:text-rose-400 mt-0.5">
-                  Not reachable — {(rate * 100).toFixed(0)}% return doesn't beat {inflationPct}% inflation
+                  ~{yearsToGo.toFixed(1)} yrs at {(rate * 100).toFixed(0)}%
                 </div>
               )}
               {targetMonthly > 0 && (
                 <div className="text-xs text-muted-foreground mt-0.5">
-                  {formatINR(targetMonthly)}/mo in today's money — target keeps pace with inflation
+                  {formatINR(targetMonthly)}/mo withdrawal at retirement
                 </div>
               )}
             </div>
@@ -477,7 +469,7 @@ function RetirementGoal({ corpus, swrPct, inflationPct }: { corpus: number; swrP
         </div>
 
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-muted-foreground">Projected return (nominal, pre-inflation)</span>
+          <span className="text-xs text-muted-foreground">Projected return</span>
           <div className="inline-flex rounded-lg border border-border overflow-hidden text-xs">
             {GOAL_RATES.map((r) => (
               <button
@@ -557,7 +549,7 @@ export default function Retirement() {
       />
 
       {/* Retirement goal progress */}
-      <RetirementGoal corpus={totalCorpus} swrPct={config.swr_pct} inflationPct={config.inflation_pct} />
+      <RetirementGoal corpus={totalCorpus} swrPct={config.swr_pct} />
 
       <ConfigCard config={config} />
 
