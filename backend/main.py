@@ -43,8 +43,21 @@ def active_db():
 
 
 def ensure_schema():
-    """Create all tables if they don't exist yet (safe to run on every startup)."""
-    conn = sqlite3.connect(active_db())
+    """Create all tables if they don't exist yet (safe to run on every startup).
+
+    Runs against BOTH the live and (if present) dummy DBs — new tables like
+    Retirement_Config previously landed only in whichever DB was active, so
+    demo mode 500'd on the new endpoints and pages silently showed cached
+    LIVE data instead of demo data.
+    """
+    for db_path in (DB_PATH, DUMMY_PATH):
+        if db_path == DUMMY_PATH and not os.path.exists(db_path):
+            continue
+        _ensure_schema_for(db_path)
+
+
+def _ensure_schema_for(db_path: str):
+    conn = sqlite3.connect(db_path)
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS User1_MF (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,

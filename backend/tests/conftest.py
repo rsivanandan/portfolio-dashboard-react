@@ -188,6 +188,13 @@ def client(tmp_path):
 
     original = main.DB_PATH
     main.DB_PATH = db_file
+    # Force the live-DB path regardless of the demo toggle: active_db() reads
+    # MODE_FILE, and with mode=dummy the whole suite would silently read AND
+    # WRITE the real dummy_investments.db instead of this tmp fixture.
+    original_mode_file = main.MODE_FILE
+    main.MODE_FILE = str(tmp_path / "nonexistent_mode.txt")
+    original_dummy = main.DUMMY_PATH
+    main.DUMMY_PATH = str(tmp_path / "nonexistent_dummy.db")
 
     main.app.dependency_overrides[get_current_user] = lambda: MOCK_USER
 
@@ -195,4 +202,6 @@ def client(tmp_path):
         yield c
 
     main.DB_PATH = original
+    main.MODE_FILE = original_mode_file
+    main.DUMMY_PATH = original_dummy
     main.app.dependency_overrides.clear()
