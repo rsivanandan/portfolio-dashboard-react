@@ -10,10 +10,11 @@ export default function Marquee() {
       </div>
     )
 
-  const items = data.map((d) => {
+  // Rendered twice for the seamless loop, so keys must be unique per copy
+  const items = (copy: string) => data.map((d) => {
     const pos = d.change >= 0
     return (
-      <span key={d.label} className="inline-flex items-center gap-1.5 mx-6">
+      <span key={`${copy}-${d.label}`} className="inline-flex items-center gap-1.5 mx-6">
         <span className="text-muted-foreground text-xs font-semibold">{d.label}</span>
         <span className={`text-xs font-mono font-bold ${pos ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
           {d.value.toLocaleString('en-IN')}
@@ -25,7 +26,7 @@ export default function Marquee() {
     )
   })
 
-  const content = [...items, ...items]
+  const content = [...items('a'), ...items('b')]
 
   return (
     <div className="h-9 bg-card/80 backdrop-blur-sm border-b border-border overflow-hidden flex items-center">

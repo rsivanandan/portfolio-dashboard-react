@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Marquee from './components/Marquee'
 import { Spinner } from './components/UI'
+import { useQueryClient } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import { ToastProvider, useToast } from './components/Toast'
 import Login from './pages/Login'
@@ -13,24 +14,40 @@ import { IconMenu2 } from '@tabler/icons-react'
 const Dashboard  = lazy(() => import('./pages/Dashboard'))
 const Insights   = lazy(() => import('./pages/Insights'))
 const Holdings   = lazy(() => import('./pages/Holdings'))
+const Retirement = lazy(() => import('./pages/Retirement'))
 const Admin      = lazy(() => import('./pages/Admin'))
 const SystemAdmin = lazy(() => import('./pages/SystemAdmin'))
 
 function AuthGate() {
-  const { user, isLoading, logout } = useAuth()
+  const { user, isLoading, logout, refreshSession } = useAuth()
   const { toast } = useToast()
+  const queryClient = useQueryClient()
   const [view, setView] = useState<'login' | 'signup'>('login')
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
-  // If a protected API call returns 401 (token expired mid-session), force logout
+  // On a 401 mid-session (e.g. token expired while the laptop slept), first
+  // try a silent refresh — the httpOnly refresh cookie usually still works.
+  // Only give up the session when the refresh itself fails.
   useEffect(() => {
-    const handler = () => {
-      toast('Session expired. Please sign in again.', 'error')
-      logout()
+    let refreshing = false
+    const handler = async () => {
+      if (refreshing) return
+      refreshing = true
+      try {
+        const restored = await refreshSession()
+        if (restored) {
+          queryClient.invalidateQueries()
+        } else {
+          toast('Session expired. Please sign in again.', 'error')
+          logout()
+        }
+      } finally {
+        refreshing = false
+      }
     }
     window.addEventListener('auth:unauthorized', handler)
     return () => window.removeEventListener('auth:unauthorized', handler)
-  }, [logout, toast])
+  }, [logout, toast, refreshSession, queryClient])
 
   if (isLoading) {
     return (
@@ -82,6 +99,7 @@ function AuthGate() {
                 <Route path="/"        element={<Dashboard />} />
                 <Route path="/insights" element={<Insights />} />
                 <Route path="/holdings" element={<Holdings />} />
+                <Route path="/retirement" element={<Retirement />} />
                 <Route path="/admin"    element={<Admin />} />
                 <Route path="/system"   element={<SystemAdmin />} />
                 {/* Legacy redirects */}

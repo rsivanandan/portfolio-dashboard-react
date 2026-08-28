@@ -15,7 +15,13 @@ export const STORAGE_KEY = 'portfolio-users'
 const EVENT_NAME = 'portfolio-users-updated'
 
 function normalize(users: PortfolioUser[]): PortfolioUser[] {
-  return users.map((u, i) => ({ ...u, key: BACKEND_KEYS[i] ?? u.key }))
+  // A user's key is its permanent link to backend data (User1_MF, user1 PF, …).
+  // Keep existing keys; only assign a free backend key to users that lack one.
+  // Positional re-keying would re-attach a surviving user's name to the
+  // DELETED user's holdings.
+  const taken = new Set(users.map((u) => u.key).filter(Boolean))
+  const free = BACKEND_KEYS.filter((k) => !taken.has(k))
+  return users.map((u) => ({ ...u, key: u.key || free.shift() || '' }))
 }
 
 export function getStoredUsers(): PortfolioUser[] {

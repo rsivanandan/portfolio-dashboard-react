@@ -252,6 +252,15 @@ export const useMarketTicker = () =>
 export const useNiftyHistory = () =>
   useQuery({ queryKey: ['nifty-hist'], queryFn: () => get<NiftyPoint[]>('/market/nifty-history'), staleTime: 60000 })
 
+// Everything derived from PF rows / opening balances — admin edits must bust all of it
+const PF_QUERY_KEYS = [['pf'], ['pf-user1'], ['pf-user2'], ['summary'], ['admin-pf']] as const
+// Everything derived from MF rows — admin edits must bust all of it
+const MF_QUERY_KEYS = [['mf'], ['mf-user1'], ['mf-user2'], ['mf-cats'], ['mf-returns'], ['summary'], ['admin-mf']] as const
+
+function invalidateAll(qc: ReturnType<typeof useQueryClient>, keys: readonly (readonly string[])[]) {
+  for (const key of keys) qc.invalidateQueries({ queryKey: key as unknown as string[] })
+}
+
 export const usePF = () => useQuery({ queryKey: ['pf'], queryFn: () => get<PFEntry[]>('/pf') })
 export const usePFUser1 = () =>
   useQuery({ queryKey: ['pf-user1'], queryFn: () => get<PFEntry[]>('/pf/user1') })
@@ -269,10 +278,7 @@ export function useAdminCreatePF() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (data: PFFormData) => postJSON<{ status: string; rowid: number }>('/admin/pf', data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin-pf'] })
-      qc.invalidateQueries({ queryKey: ['summary'] })
-    },
+    onSuccess: () => invalidateAll(qc, PF_QUERY_KEYS),
   })
 }
 
@@ -281,10 +287,7 @@ export function useAdminUpdatePF() {
   return useMutation({
     mutationFn: ({ owner, rowid, data }: { owner: string; rowid: number; data: PFFormData }) =>
       putJSON<{ status: string }>(`/admin/pf/${owner}/${rowid}`, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin-pf'] })
-      qc.invalidateQueries({ queryKey: ['summary'] })
-    },
+    onSuccess: () => invalidateAll(qc, PF_QUERY_KEYS),
   })
 }
 
@@ -293,10 +296,7 @@ export function useAdminDeletePF() {
   return useMutation({
     mutationFn: ({ owner, rowid }: { owner: string; rowid: number }) =>
       del<{ status: string }>(`/admin/pf/${owner}/${rowid}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin-pf'] })
-      qc.invalidateQueries({ queryKey: ['summary'] })
-    },
+    onSuccess: () => invalidateAll(qc, PF_QUERY_KEYS),
   })
 }
 
@@ -314,7 +314,7 @@ export function useUpdatePFConfig() {
       putJSON<{ status: string }>(`/admin/pf-config/${owner}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pf-config'] })
-      qc.invalidateQueries({ queryKey: ['summary'] })
+      invalidateAll(qc, PF_QUERY_KEYS)
     },
   })
 }
@@ -335,7 +335,7 @@ export function useAdminSetPFAccount() {
       putJSON<{ status: string }>(`/admin/pf-accounts/${owner}`, data),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ['pf-accounts', vars.owner] })
-      qc.invalidateQueries({ queryKey: ['summary'] })
+      invalidateAll(qc, PF_QUERY_KEYS)
     },
   })
 }
@@ -347,7 +347,7 @@ export function useAdminDeletePFAccount() {
       del<{ status: string }>(`/admin/pf-accounts/${owner}/${encodeURIComponent(account)}`),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ['pf-accounts', vars.owner] })
-      qc.invalidateQueries({ queryKey: ['summary'] })
+      invalidateAll(qc, PF_QUERY_KEYS)
     },
   })
 }
@@ -540,10 +540,7 @@ export function useAdminCreateMF() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (data: MFFormData) => postJSON<{ status: string; rowid: number }>('/admin/mf', data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin-mf'] })
-      qc.invalidateQueries({ queryKey: ['summary'] })
-    },
+    onSuccess: () => invalidateAll(qc, MF_QUERY_KEYS),
   })
 }
 
@@ -552,10 +549,7 @@ export function useAdminUpdateMF() {
   return useMutation({
     mutationFn: ({ owner, rowid, data }: { owner: string; rowid: number; data: MFFormData }) =>
       putJSON<{ status: string }>(`/admin/mf/${owner}/${rowid}`, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin-mf'] })
-      qc.invalidateQueries({ queryKey: ['summary'] })
-    },
+    onSuccess: () => invalidateAll(qc, MF_QUERY_KEYS),
   })
 }
 
@@ -564,10 +558,67 @@ export function useAdminDeleteMF() {
   return useMutation({
     mutationFn: ({ owner, rowid }: { owner: string; rowid: number }) =>
       del<{ status: string }>(`/admin/mf/${owner}/${rowid}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin-mf'] })
-      qc.invalidateQueries({ queryKey: ['summary'] })
-    },
+    onSuccess: () => invalidateAll(qc, MF_QUERY_KEYS),
+  })
+}
+
+// ── Retirement: 3-Bucket Strategy ───────────────────────────────────────────
+
+export type BucketName = 'cash' | 'safety' | 'growth'
+
+export interface RetirementConfig {
+  swr_pct: number
+  inflation_pct: number
+  bucket1_years: number
+  bucket2_years: number
+  cash_amount: number
+}
+
+export interface BucketHolding {
+  entity: 'mf' | 'stock' | 'pf'
+  key: string
+  name: string
+  category: string
+  value: number
+  bucket: BucketName
+}
+
+export interface BucketSlice {
+  entity: BucketHolding['entity'] | 'cash'
+  key: string
+  name: string
+  amount: number
+  partial: boolean
+  /** The bucket this money was assigned to pour into first */
+  priority: BucketName
+}
+
+export interface RetirementData {
+  config: RetirementConfig
+  holdings: BucketHolding[]
+  buckets: Record<BucketName, { actual: number; target: number | null; slices: BucketSlice[]; years_covered: number | null }>
+  corpus: number
+  annual_affordable: number
+  monthly_affordable: number
+}
+
+export const useRetirement = () =>
+  useQuery({ queryKey: ['retirement'], queryFn: () => get<RetirementData>('/retirement') })
+
+export function useUpdateRetirementConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: RetirementConfig) => putJSON<{ status: string }>('/retirement/config', data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['retirement'] }),
+  })
+}
+
+export function useAssignBucket() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { entity: string; key: string; bucket: BucketName }) =>
+      putJSON<{ status: string }>('/retirement/assign', data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['retirement'] }),
   })
 }
 

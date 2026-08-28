@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { useStocks, useStocksUser1, useStocksUser2 } from '../hooks/useApi'
 import { StatCard, Spinner, Card, PageHeader, Table, ReturnsCell, PctCell } from '../components/UI'
 import { formatINR, CHART_THEME } from '../utils/format'
@@ -89,7 +89,7 @@ export default function Stocks() {
             />
             <Bar dataKey="returns" radius={[0, 4, 4, 0]}>
               {chartData.map((entry, i) => (
-                <rect key={i} fill={entry.fill} />
+                <Cell key={i} fill={entry.fill} />
               ))}
             </Bar>
           </BarChart>

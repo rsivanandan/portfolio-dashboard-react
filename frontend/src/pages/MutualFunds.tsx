@@ -71,15 +71,18 @@ export default function MutualFunds() {
   const totalPct = totalInv ? (totalRet / totalInv) * 100 : 0
 
   function getCashflows(dataArr: MutualFund[]): { amount: number; date: string }[] {
-    if (!dataArr || dataArr.length === 0) return [];
-    const flows: { amount: number; date: string }[] = [];
-    dataArr.forEach((mf) => {
-      if (mf.Value_at_cost && mf.Purchase_Date) {
-        flows.push({ amount: -Math.abs(mf.Value_at_cost), date: mf.Purchase_Date });
-      }
-    });
-    if (totalNow > 0) {
-      flows.push({ amount: totalNow, date: new Date().toISOString().slice(0, 10) });
+    // Symmetric cashflows: only funds with full purchase info participate —
+    // both their outflow AND their current value. Also compute the terminal
+    // value from THIS array (previously it used the active tab's total for
+    // all three tabs' cashflows).
+    const rows = (dataArr || []).filter(
+      (f) => f.Fund_Name && f.Fund_Name.trim() !== '' && f.Value_at_cost && f.Purchase_Date,
+    );
+    if (rows.length === 0) return [];
+    const flows = rows.map((mf) => ({ amount: -Math.abs(mf.Value_at_cost), date: mf.Purchase_Date as string }));
+    const nowVal = rows.reduce((a, f) => a + (f.Value_now || 0), 0);
+    if (nowVal > 0) {
+      flows.push({ amount: nowVal, date: new Date().toISOString().slice(0, 10) });
     }
     return flows;
   }
@@ -130,9 +133,10 @@ export default function MutualFunds() {
   }
 
   const summaryData: SummaryRow[] = (() => {
-    const map = new Map<number, { Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number }>()
+    const map = new Map<number | string, { Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number }>()
     for (const f of data) {
-      const key = f.AMFI_CODE
+      // null AMFI codes must not collapse into one merged row
+      const key = f.AMFI_CODE ?? `name:${f.Fund_Name}`
       const existing = map.get(key)
       if (existing) {
         existing.Units += f.Units || 0

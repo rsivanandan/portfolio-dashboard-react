@@ -1,12 +1,15 @@
 export function formatINR(value: number | null | undefined): string {
-  if (value == null) return '₹0'
-  if (Math.abs(value) >= 10000000) return `₹${(value / 10000000).toFixed(2)}Cr`
-  if (Math.abs(value) >= 100000) return `₹${(value / 100000).toFixed(2)}L`
+  if (value == null || !Number.isFinite(value)) return '₹0'
+  // Sign before the ₹ symbol, matching Intl's negative rendering ("-₹25,000")
+  const sign = value < 0 ? '-' : ''
+  const abs = Math.abs(value)
+  if (abs >= 10000000) return `${sign}₹${(abs / 10000000).toFixed(2)}Cr`
+  if (abs >= 100000) return `${sign}₹${(abs / 100000).toFixed(2)}L`
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value)
 }
 
 export function formatINRFull(value: number | null | undefined): string {
-  if (value == null) return '₹0'
+  if (value == null || !Number.isFinite(value)) return '₹0'
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(value)
 }
 

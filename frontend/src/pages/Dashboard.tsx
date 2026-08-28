@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts'
 import { useSummary, useNiftyHistory, useSnapshots, usePF, useAdminPFAccounts, useMutualFunds } from '../hooks/useApi'
 import { StatCard, Spinner, Card, PageHeader } from '../components/UI'
-import { formatINR, formatPct, cn, CHART_THEME_LIGHT, CHART_THEME_DARK } from '../utils/format'
+import { formatINR, formatPct, CHART_THEME_LIGHT, CHART_THEME_DARK } from '../utils/format'
 import { calculateXIRR, buildPFCashflows, buildMFCashflows } from '../utils/xirrUtils'
 import { useTheme } from '../hooks/useTheme'
 import { AnimatedList } from '../components/AnimatedList'
@@ -29,132 +29,6 @@ const TT = ({ active, payload, label }: TooltipProps) => {
         </div>
       ))}
     </div>
-  )
-}
-
-// ── Retirement goal progress ───────────────────────────────────────────────
-const RETIREMENT_RATES = [0.08, 0.10, 0.12, 0.14]
-const RETIREMENT_INFLATION = 0.06
-const RETIREMENT_SW_RATE = 0.04 // 4% withdrawal rule
-const RETIREMENT_MONTHLY_KEY = 'retirement.targetMonthly'
-const RETIREMENT_RATE_KEY = 'retirement.rate'
-
-function RetirementProgress({ now }: { now: number }) {
-  const [rate, setRate] = useState<number>(() => {
-    const stored = localStorage.getItem(RETIREMENT_RATE_KEY)
-    const v = stored ? parseFloat(stored) : NaN
-    return RETIREMENT_RATES.includes(v) ? v : RETIREMENT_RATES[1]
-  })
-  const [targetMonthly, setTargetMonthly] = useState<number>(() => {
-    const stored = localStorage.getItem(RETIREMENT_MONTHLY_KEY)
-    const v = stored ? parseFloat(stored) : NaN
-    return Number.isFinite(v) && v > 0 ? Math.round(v) : 360_000
-  })
-  const targetCorpus = targetMonthly > 0 ? (targetMonthly * 12) / RETIREMENT_SW_RATE : 0
-  const pct = targetCorpus > 0 ? Math.min((now / targetCorpus) * 100, 100) : 0
-  const remaining = Math.max(targetCorpus - now, 0)
-  const currentMonthly = (now * RETIREMENT_SW_RATE) / 12
-  const yearsToGo = now > 0 && targetCorpus > now
-    ? Math.log(targetCorpus / now) / Math.log(1 + rate)
-    : 0
-  const todayMonthly = yearsToGo > 0
-    ? targetMonthly / Math.pow(1 + RETIREMENT_INFLATION, yearsToGo)
-    : targetMonthly
-
-  return (
-    <Card title="Retirement Goal">
-      <div className="flex flex-col gap-5 pt-1">
-        <div>
-          <div className="flex items-end justify-between mb-2">
-            <div>
-              <div className="text-muted-foreground text-[11px] font-semibold tracking-[0.08em] uppercase">Current Net Worth</div>
-              <div className="text-2xl font-bold text-foreground">{formatINR(now)}</div>
-            </div>
-            <div className="text-right">
-              <div className="text-muted-foreground text-[11px] font-semibold tracking-[0.08em] uppercase">Target</div>
-              <div className="text-2xl font-bold text-foreground">{formatINR(targetCorpus)}</div>
-              {yearsToGo > 0 && (
-                <div className="text-xs text-indigo-600 dark:text-indigo-400 mt-0.5">
-                  ~{yearsToGo.toFixed(1)} yrs at {(rate * 100).toFixed(0)}%
-                </div>
-              )}
-              {targetMonthly > 0 && (
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  {formatINR(targetMonthly)}/mo ≈ {formatINR(todayMonthly)} today @ {formatPct(RETIREMENT_INFLATION * 100)} inflation
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="relative h-3.5 rounded-full bg-muted overflow-hidden">
-            <div
-              className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-violet-400 transition-all duration-700"
-              style={{ width: `${pct}%` }}
-            />
-            <div
-              className="absolute inset-y-0 w-px bg-foreground/30"
-              style={{ left: `${pct}%` }}
-            />
-          </div>
-          <div className="flex items-center justify-between mt-1.5 text-[11px] text-muted-foreground font-mono">
-            <span>₹0</span>
-            <span className="font-semibold text-foreground">{pct.toFixed(1)}% funded</span>
-            <span>{formatINR(targetCorpus)}</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 border-t border-border/60 pt-4">
-          {[
-            { label: 'Current Value', value: formatINR(now) },
-            { label: 'Current Monthly (4%)', value: formatINR(currentMonthly) },
-            { label: 'Target', value: formatINR(targetCorpus) },
-            { label: 'Remaining', value: formatINR(remaining) },
-          ].map((c) => (
-            <div key={c.label}>
-              <div className="text-muted-foreground text-[11px] font-semibold tracking-[0.08em] uppercase mb-1">{c.label}</div>
-              <div className="text-lg font-bold text-foreground">{c.value}</div>
-            </div>
-          ))}
-          <div>
-            <div className="text-muted-foreground text-[11px] font-semibold tracking-[0.08em] uppercase mb-1">Target Monthly (4%)</div>
-            <div className="flex items-baseline gap-1 text-lg font-bold text-foreground">
-              <span className="text-sm text-muted-foreground font-normal">₹</span>
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                value={targetMonthly > 0 ? (targetMonthly / 100000).toFixed(1) : ''}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value)
-                  const next = Number.isFinite(v) && v > 0 ? Math.round(v * 100000) : 0
-                  setTargetMonthly(next)
-                  localStorage.setItem(RETIREMENT_MONTHLY_KEY, String(next))
-                }}
-                className="w-16 bg-transparent border-b border-border focus:outline-none focus:border-primary text-right font-bold tabular-nums"
-              />
-              <span className="text-sm text-muted-foreground font-normal">L</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-muted-foreground">Projected return</span>
-          <div className="inline-flex rounded-lg border border-border overflow-hidden text-xs">
-            {RETIREMENT_RATES.map((r) => (
-              <button
-                key={r}
-                onClick={() => { setRate(r); localStorage.setItem(RETIREMENT_RATE_KEY, String(r)) }}
-                className={cn(
-                  'px-3 py-1 transition-all',
-                  rate === r ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {(r * 100).toFixed(0)}%
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    </Card>
   )
 }
 
@@ -291,9 +165,6 @@ export default function Dashboard() {
           </div>
         )
       )}
-
-      {/* Retirement progress */}
-      {summary && <RetirementProgress now={summary.total_now} />}
 
       {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

@@ -229,7 +229,7 @@ export default function Insights() {
           {(cagr != null || xirrValue != null) && (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {cagr != null && (
-                <StatCard label="CAGR (Snapshots)" value={`${cagr.toFixed(2)}%`} positive={cagr >= 0} accent="indigo" />
+                <StatCard label="Portfolio Growth /yr" subtitle="Incl. fresh contributions — not a return" value={`${cagr.toFixed(2)}%`} positive={cagr >= 0} accent="indigo" />
               )}
               {xirrValue != null && (
                 <XIRRCard value={xirrValue} label="XIRR (All MF)" accent="green" />

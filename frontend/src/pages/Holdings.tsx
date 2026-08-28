@@ -21,7 +21,7 @@ import {
 import { useStocks, useStocksUser1, useStocksUser2, useMutualFunds, useMFUser1, useMFUser2, useMFCategories, useMFReturns, usePF, usePFUser1, usePFUser2, usePFConfig, useAdminPFAccounts } from '../hooks/useApi'
 import { StatCard, Spinner, Card, PageHeader, Table, ReturnsCell, PctCell, TabBar } from '../components/UI'
 import { XIRRCard } from '../components/XIRRCard'
-import { calculateXIRR, buildPFCashflows, buildMFCashflows } from '../utils/xirrUtils'
+import { calculateXIRR, buildPFCashflows, buildMFCashflows, latestPFBalance } from '../utils/xirrUtils'
 import { formatINR, CHART_COLORS, CHART_THEME_LIGHT, CHART_THEME_DARK } from '../utils/format'
 import { exportToCSV } from '../utils/export'
 import { useTheme } from '../hooks/useTheme'
@@ -85,19 +85,48 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
       current: f.Value_now || 0,
     }))
 
-  type SummaryRow = { AMFI_CODE: number; Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number; Returns: number; Returns_pct: number; Avg_Purchase_Price: number | null; Daily_Change: number | null }
+  type SummaryRow = { AMFI_CODE: number; Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number; Returns: number; Returns_pct: number; Avg_Purchase_Price: number | null; Daily_Change: number | null; Age: string | null; First_Purchase: string | undefined }
+
+  const ageLabel = (first: Date): string | null => {
+    const now = new Date()
+    const days = Math.floor((now.getTime() - first.getTime()) / (24 * 3600 * 1000))
+    if (days < 0) return null // future-dated purchase (bad import) — show nothing
+    const months = Math.round(days / 30.4375)
+    if (months < 1) return '<1 mo'
+    if (months < 12) return `${months} mo`
+    const years = Math.floor(months / 12)
+    const rem = months % 12
+    return rem === 0 ? `${years} yr` : `${years} yr ${rem} mo`
+  }
+
+  // Local-date formatter — toISOString() shifts to UTC and can move the date
+  // back a day in IST.
+  const localISO = (d: Date): string =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+  // Group key: AMFI code when present; null codes must NOT collapse into one
+  // bogus merged row, so fall back to the fund name.
+  const groupKey = (f: MutualFund): number | string => f.AMFI_CODE ?? `name:${f.Fund_Name}`
+
   const summaryData: SummaryRow[] = (() => {
-    const map = new Map<number, { AMFI_CODE: number; Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number }>()
+    const parseDate = (s?: string | null): Date | null => {
+      if (!s) return null
+      const dt = new Date(String(s).match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? s)
+      return isNaN(dt.getTime()) ? null : dt
+    }
+    const map = new Map<number | string, { AMFI_CODE: number; Fund_Name: string; Category: string; Units: number; Current_NAV: number; Previous_NAV: number | null; Value_at_cost: number; Value_now: number; First_Purchase?: Date }>()
     for (const f of data) {
-      const existing = map.get(f.AMFI_CODE)
+      const pd = parseDate(f.Purchase_Date)
+      const existing = map.get(groupKey(f))
       if (existing) {
         existing.Units += f.Units || 0
         existing.Value_at_cost += f.Value_at_cost || 0
         existing.Value_now += f.Value_now || 0
         existing.Current_NAV = f.Current_NAV || existing.Current_NAV
         existing.Previous_NAV = f.Previous_NAV ?? existing.Previous_NAV
+        if (pd && (!existing.First_Purchase || pd < existing.First_Purchase)) existing.First_Purchase = pd
       } else {
-        map.set(f.AMFI_CODE, { AMFI_CODE: f.AMFI_CODE, Fund_Name: f.Fund_Name, Category: f.Category || 'Other', Units: f.Units || 0, Current_NAV: f.Current_NAV || 0, Previous_NAV: f.Previous_NAV ?? null, Value_at_cost: f.Value_at_cost || 0, Value_now: f.Value_now || 0 })
+        map.set(groupKey(f), { AMFI_CODE: f.AMFI_CODE, Fund_Name: f.Fund_Name, Category: f.Category || 'Other', Units: f.Units || 0, Current_NAV: f.Current_NAV || 0, Previous_NAV: f.Previous_NAV ?? null, Value_at_cost: f.Value_at_cost || 0, Value_now: f.Value_now || 0, First_Purchase: pd ?? undefined })
       }
     }
     return Array.from(map.values()).map((r) => ({
@@ -106,19 +135,22 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
       Returns_pct: r.Value_at_cost ? ((r.Value_now - r.Value_at_cost) / r.Value_at_cost) * 100 : 0,
       Avg_Purchase_Price: r.Units ? r.Value_at_cost / r.Units : null,
       Daily_Change: r.Previous_NAV != null ? r.Units * (r.Current_NAV - r.Previous_NAV) : null,
+      Age: r.First_Purchase ? ageLabel(r.First_Purchase) : null,
+      First_Purchase: r.First_Purchase ? localISO(r.First_Purchase) : undefined,
     }))
   })()
 
-  const xirrByCode = new Map<number, number | null>()
+  const xirrByCode = new Map<number | string, number | null>()
   for (const f of data) {
-    if (xirrByCode.has(f.AMFI_CODE)) continue
-    xirrByCode.set(f.AMFI_CODE, calculateXIRR(buildMFCashflows(data.filter((r) => r.AMFI_CODE === f.AMFI_CODE))))
+    const key = groupKey(f)
+    if (xirrByCode.has(key)) continue
+    xirrByCode.set(key, calculateXIRR(buildMFCashflows(data.filter((r) => groupKey(r) === key))))
   }
 
   type DetailRow = MutualFund & { Returns: number; Returns_pct: number; Avg_Purchase_Price: number | null }
   const detailData: DetailRow[] = filtered
     .map((r) => ({ ...r, Returns: r.Value_now - r.Value_at_cost, Returns_pct: r.Value_at_cost ? ((r.Value_now - r.Value_at_cost) / r.Value_at_cost) * 100 : 0, Avg_Purchase_Price: r.Units ? r.Value_at_cost / r.Units : null }))
-    .sort((a, b) => new Date(b.Purchase_Date || '').getTime() - new Date(a.Purchase_Date || '').getTime())
+    .sort((a, b) => (new Date(b.Purchase_Date || 0).getTime() || 0) - (new Date(a.Purchase_Date || 0).getTime() || 0))
 
   return (
     <div className="space-y-6">
@@ -126,7 +158,7 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
         <StatCard label="Total Invested" value={formatINR(totalInv)} accent="blue" />
         <StatCard label="Current Value" value={formatINR(totalNow)} delta={`${totalPct.toFixed(2)}%`} positive={totalPct >= 0} accent="green" />
         <StatCard label="Total Returns" value={formatINR(totalRet)} positive={totalRet >= 0} accent="amber" />
-        <StatCard label="Holdings" value={`${new Set(data.map((f) => f.AMFI_CODE)).size}`} accent="indigo" />
+        <StatCard label="Holdings" value={`${new Set(data.map(groupKey)).size}`} accent="indigo" />
         <XIRRCard value={xirrValue} />
       </div>
 
@@ -218,6 +250,7 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
             { key: '_i', label: '#', render: (_r, i) => <span className="text-muted-foreground text-xs font-mono">{i + 1}</span> },
             { key: 'Fund_Name', label: 'Fund Name', render: (r) => <span className="text-foreground text-xs font-medium">{r.Fund_Name}</span> },
             { key: 'Category', label: 'Category', render: (r) => <span className="text-muted-foreground text-xs">{r.Category}</span> },
+            { key: 'Age', label: 'Age', align: 'right', render: (r) => r.Age == null ? <span className="text-muted-foreground text-xs font-mono">—</span> : <span className="font-mono text-xs" title={`Since ${r.First_Purchase}`}>{r.Age}</span> },
             { key: 'Units', label: 'Units', align: 'right', render: (r) => <span className="font-mono text-xs">{r.Units?.toFixed(3)}</span> },
             { key: 'Avg_Purchase_Price', label: 'Avg NAV', align: 'right', render: (r) => <span className="font-mono text-xs">{r.Avg_Purchase_Price != null ? `₹${r.Avg_Purchase_Price.toFixed(2)}` : '—'}</span> },
             { key: 'Current_NAV', label: 'Current NAV', align: 'right', render: (r) => <span className="font-mono text-xs">₹{r.Current_NAV?.toFixed(2)}</span> },
@@ -227,7 +260,7 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
             { key: 'Daily_Change', label: 'Daily Change', align: 'right', render: (r) => r.Daily_Change == null ? <span className="text-muted-foreground text-xs font-mono">—</span> : <ReturnsCell value={r.Daily_Change} /> },
             { key: 'Returns_pct', label: 'Return %', align: 'right', render: (r) => <PctCell value={r.Returns_pct} /> },
             { key: 'XIRR', label: 'XIRR', align: 'right', render: (r) => {
-              const x = xirrByCode.get(r.AMFI_CODE)
+              const x = xirrByCode.get(r.AMFI_CODE ?? `name:${r.Fund_Name}`)
               return x == null
                 ? <span className="text-muted-foreground text-xs font-mono">—</span>
                 : <PctCell value={x * 100} />
@@ -328,7 +361,7 @@ function StocksSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab:
             <Tooltip formatter={(v: number) => [`${v}%`, 'Return']} contentStyle={{ background: CT.bg, border: `1px solid ${CT.border}`, borderRadius: 8 }} itemStyle={{ color: CT.text }} labelStyle={{ color: CT.text }} />
             <Bar dataKey="returns" radius={[0, 4, 4, 0]}>
               {chartData.map((entry, i) => (
-                <rect key={i} fill={entry.fill} />
+                <Cell key={i} fill={entry.fill} />
               ))}
             </Bar>
           </BarChart>
@@ -395,7 +428,8 @@ function PFSection({ CT, tab }: { CT: typeof CHART_THEME_LIGHT; tab: PersonTab }
           : 0)
 
   const totalContrib = initialBalance + data.reduce((a, r) => a + (r.total_contrib || 0), 0)
-  const totalNow = data.length > 0 ? data[0].running_balance || 0 : initialBalance
+  // running_balance is per owner — on the All tab, sum each owner's latest balance
+  const totalNow = data.length > 0 ? latestPFBalance(data) : initialBalance
   const totalReturns = totalNow - totalContrib
   const totalPct = totalContrib ? (totalReturns / totalContrib) * 100 : 0
 

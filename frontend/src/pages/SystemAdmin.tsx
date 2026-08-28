@@ -8,7 +8,9 @@ import { useAuth } from '../hooks/useAuth'
 
 // ── Users Section ─────────────────────────────────────────────────────────────
 
-const MAX_USERS = 4
+// The backend only has tables/routes for user1 and user2 — a third user would
+// get an empty tab and 400s from /api/*/user3.
+const MAX_USERS = 2
 
 function isDefaultUsers(users: PortfolioUser[]): boolean {
   return users.length === DEFAULT_USERS.length &&
@@ -203,13 +205,17 @@ function AccountAccessSection() {
 
   const doAction = async (endpoint: string, method = 'PUT') => {
     const token = getToken()
-    await fetch(endpoint, {
-      method,
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      credentials: 'include',
-    })
-    setActionMsg('Done')
-    setTimeout(() => setActionMsg(''), 2000)
+    try {
+      const res = await fetch(endpoint, {
+        method,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
+      })
+      setActionMsg(res.ok ? 'Done' : `Failed (${res.status})`)
+    } catch {
+      setActionMsg('Failed (network)')
+    }
+    setTimeout(() => setActionMsg(''), 3000)
     fetchUsers()
   }
 

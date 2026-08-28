@@ -90,7 +90,7 @@ export default function Analytics() {
             accent="amber"
           />
           {cagr && (
-            <StatCard label="CAGR (Snapshots)" value={`${cagr.toFixed(2)}%`} positive={cagr >= 0} accent="indigo" />
+            <StatCard label="Portfolio Growth /yr" subtitle="Incl. fresh contributions — not a return" value={`${cagr.toFixed(2)}%`} positive={cagr >= 0} accent="indigo" />
           )}
         </div>
       )}

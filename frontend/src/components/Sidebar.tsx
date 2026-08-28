@@ -1,6 +1,6 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import {
-  IconLayoutDashboard, IconTrendingUp, IconBriefcase, IconRefresh,
+  IconLayoutDashboard, IconTrendingUp, IconBriefcase, IconRefresh, IconPigMoney,
   IconSettings, IconSun, IconMoon, IconShieldCheck, IconLogout, IconX, IconFlask,
 } from '@tabler/icons-react'
 import { cn } from '../utils/format'
@@ -22,6 +22,7 @@ const navGroups = [
     items: [
       { to: '/insights', icon: IconTrendingUp, label: 'Insights', end: false },
       { to: '/holdings', icon: IconBriefcase, label: 'Holdings', end: false },
+      { to: '/retirement', icon: IconPigMoney, label: 'Retirement', end: false },
     ],
   },
   {

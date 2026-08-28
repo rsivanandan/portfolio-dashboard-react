@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { setApiTokenAccessor } from './useApi'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -22,6 +23,8 @@ interface AuthContextValue extends AuthState {
   signup: (username: string, email: string, password: string) => Promise<{ message: string; autoLoggedIn: boolean }>
   logout: () => Promise<void>
   getToken: () => string | null
+  /** Attempt a silent token refresh; true if the session was restored */
+  refreshSession: () => Promise<boolean>
 }
 
 // ── Context ────────────────────────────────────────────────────────────────
@@ -73,6 +76,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isLoading: true,
   })
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const queryClient = useQueryClient()
 
   // Decode JWT payload without verifying signature (verification is backend's job)
   function tokenExpiresInMs(token: string): number {
@@ -101,7 +105,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState({ user: null, accessToken: null, isLoading: false })
     setApiTokenAccessor(() => null)
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
-  }, [])
+    // Query keys are not user-scoped: cached financial data must not survive
+    // into the next login (or across a live/demo DB switch).
+    queryClient.clear()
+  }, [queryClient])
 
   // Try to get a new access token using the httpOnly refresh cookie
   async function silentRefresh(): Promise<string | null> {
@@ -153,8 +160,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const getToken = useCallback(() => state.accessToken, [state.accessToken])
 
+  const refreshSession = useCallback(async () => (await silentRefresh()) != null, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
-    <AuthContext.Provider value={{ ...state, login, signup, logout, getToken }}>
+    <AuthContext.Provider value={{ ...state, login, signup, logout, getToken, refreshSession }}>
       {children}
     </AuthContext.Provider>
   )

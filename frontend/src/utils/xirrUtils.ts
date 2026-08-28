@@ -42,6 +42,25 @@ export interface PFOpening {
  * @param accounts Per-account opening balances.
  * @returns Cashflow array consumable by calculateXIRR.
  */
+/**
+ * Household PF balance from a (possibly combined) /api/pf row set.
+ *
+ * `running_balance` is cumulative PER OWNER, so on combined feeds the latest
+ * row's balance is only one member's corpus. Rows arrive latest-first: take
+ * the first row seen per owner and sum those balances.
+ */
+export function latestPFBalance(rows: PFEntry[]): number {
+  const seen = new Set<string>();
+  let total = 0;
+  for (const r of rows) {
+    const owner = r.owner ?? '';
+    if (seen.has(owner)) continue;
+    seen.add(owner);
+    total += r.running_balance || 0;
+  }
+  return total;
+}
+
 export function buildPFCashflows(
   rows: PFEntry[],
   accounts: PFOpening[],
@@ -57,7 +76,6 @@ export function buildPFCashflows(
     }
   }
 
-  let currentValue = 0;
   for (const r of rows) {
     if (r.notes !== 'Interest credited') {
       const amount = -(r.employee_contrib + r.employer_contrib);
@@ -65,9 +83,10 @@ export function buildPFCashflows(
         flows.push({ amount, date: `${r.entry_date}-01` });
       }
     }
-    if (!currentValue && r.running_balance) currentValue = r.running_balance;
   }
 
+  // Terminal inflow: sum of each owner's latest balance (combined feeds mix owners)
+  const currentValue = latestPFBalance(rows);
   if (currentValue > 0) flows.push({ amount: currentValue, date: today });
   return flows;
 }
@@ -92,8 +111,10 @@ export function buildMFCashflows(
   for (const mf of rows) {
     if (mf.Value_at_cost && mf.Purchase_Date) {
       flows.push({ amount: -Math.abs(mf.Value_at_cost), date: mf.Purchase_Date });
+      // Only funds contributing an outflow count toward the terminal value —
+      // a fund with no purchase info would otherwise inflate XIRR (value, no cost).
+      totalVal += mf.Value_now || 0;
     }
-    totalVal += mf.Value_now || 0;
   }
 
   if (totalVal > 0) flows.push({ amount: totalVal, date: today });

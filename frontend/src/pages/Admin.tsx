@@ -131,10 +131,15 @@ function MFAdmin() {
 
   const handleSave = async () => {
     if (!form.Fund_Name.trim()) return
-    const purchaseNav = parseFloat(form.Purchase_NAV) || 0
+    const purchaseNav = parseFloat(form.Purchase_NAV)
+    // Only recompute the invested amount when Purchase_NAV is a real number —
+    // a blank/non-numeric NAV must not silently zero a stored Value_at_cost.
+    const valueAtCost = Number.isFinite(purchaseNav) && purchaseNav > 0
+      ? Math.round(form.Units * purchaseNav * 100) / 100
+      : (editing ? editing.Value_at_cost : 0)
     const data: MFFormData = {
       ...form,
-      Value_at_cost: Math.round(form.Units * purchaseNav * 100) / 100,
+      Value_at_cost: valueAtCost,
       Value_now: Math.round(form.Units * form.Current_NAV * 100) / 100,
     }
     if (editing) {

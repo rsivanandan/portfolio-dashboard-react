@@ -20,11 +20,18 @@ const SEED_MF_ROWS = [
   },
 ]
 
+// Admin sections are collapsible and start collapsed — expand one by
+// clicking its header before asserting on the content inside.
+async function expandSection(user: ReturnType<typeof userEvent.setup>, title: string) {
+  await user.click(screen.getByText(title))
+}
+
 describe('Admin Page', () => {
   let cleanup: () => void
 
   beforeEach(() => {
     cleanup = mockFetch({
+      '/api/user-names': [],
       '/api/admin/mf/user1': SEED_MF_ROWS,
       '/api/admin/mf/user2': [],
       '/api/admin/mf': { status: 'ok', rowid: 99 },
@@ -55,6 +62,8 @@ describe('Admin Page', () => {
 
   it('shows MF rows after loading', async () => {
     renderWithProviders(<Admin />)
+    const user = userEvent.setup()
+    await expandSection(user, 'Mutual Funds — CRUD')
     await waitFor(() => {
       expect(screen.getByText('HDFC Mid-Cap')).toBeInTheDocument()
     })
@@ -62,6 +71,8 @@ describe('Admin Page', () => {
 
   it('shows owner tabs (User 1/User 2)', async () => {
     renderWithProviders(<Admin />)
+    const user = userEvent.setup()
+    await expandSection(user, 'Mutual Funds — CRUD')
     const buttons = screen.getAllByRole('button')
     const u1 = buttons.find((b) => b.textContent === 'User 1')
     const u2 = buttons.find((b) => b.textContent === 'User 2')
@@ -72,6 +83,7 @@ describe('Admin Page', () => {
   it('switches to user2 owner tab', async () => {
     renderWithProviders(<Admin />)
     const user = userEvent.setup()
+    await expandSection(user, 'Mutual Funds — CRUD')
 
     // Wait for initial load
     await waitFor(() => {
@@ -90,12 +102,15 @@ describe('Admin Page', () => {
 
   it('shows "Add Fund" button', async () => {
     renderWithProviders(<Admin />)
+    const user = userEvent.setup()
+    await expandSection(user, 'Mutual Funds — CRUD')
     expect(screen.getByText('Add Fund')).toBeInTheDocument()
   })
 
   it('opens create form when Add Fund is clicked', async () => {
     renderWithProviders(<Admin />)
     const user = userEvent.setup()
+    await expandSection(user, 'Mutual Funds — CRUD')
 
     await user.click(screen.getByText('Add Fund'))
 
@@ -108,12 +123,15 @@ describe('Admin Page', () => {
 
   it('shows search input', async () => {
     renderWithProviders(<Admin />)
+    const user = userEvent.setup()
+    await expandSection(user, 'Mutual Funds — CRUD')
     expect(screen.getByPlaceholderText('Search fund name or house…')).toBeInTheDocument()
   })
 
   it('filters MF rows by search', async () => {
     renderWithProviders(<Admin />)
     const user = userEvent.setup()
+    await expandSection(user, 'Mutual Funds — CRUD')
 
     await waitFor(() => {
       expect(screen.getByText('HDFC Mid-Cap')).toBeInTheDocument()
@@ -130,6 +148,8 @@ describe('Admin Page', () => {
 
   it('shows MF table headers after loading', async () => {
     renderWithProviders(<Admin />)
+    const user = userEvent.setup()
+    await expandSection(user, 'Mutual Funds — CRUD')
     await waitFor(() => {
       // Check that table headers exist via column header role
       const headers = screen.getAllByRole('columnheader')
@@ -147,6 +167,7 @@ describe('Stocks Upload Section', () => {
 
   beforeEach(() => {
     cleanup = mockFetch({
+      '/api/user-names': [],
       '/api/admin/mf/user1': [],
       '/api/admin/mf/user2': [],
       '/api/admin/pf/user1': [],
@@ -158,6 +179,8 @@ describe('Stocks Upload Section', () => {
 
   it('shows file input accepting csv/xlsx', async () => {
     renderWithProviders(<Admin />)
+    const user = userEvent.setup()
+    await expandSection(user, 'Stocks — Upload Excel / CSV')
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
     expect(fileInput).toBeTruthy()
     expect(fileInput.getAttribute('accept')).toBe('.csv,.xlsx,.xls')
@@ -165,16 +188,22 @@ describe('Stocks Upload Section', () => {
 
   it('shows owner picker for upload', async () => {
     renderWithProviders(<Admin />)
+    const user = userEvent.setup()
+    await expandSection(user, 'Stocks — Upload Excel / CSV')
     expect(screen.getByText('Upload for:')).toBeInTheDocument()
   })
 
   it('shows upload button', async () => {
     renderWithProviders(<Admin />)
+    const user = userEvent.setup()
+    await expandSection(user, 'Stocks — Upload Excel / CSV')
     expect(screen.getByText('Upload & Replace')).toBeInTheDocument()
   })
 
   it('shows expected columns help text', async () => {
     renderWithProviders(<Admin />)
+    const user = userEvent.setup()
+    await expandSection(user, 'Stocks — Upload Excel / CSV')
     expect(screen.getByText('Instrument')).toBeInTheDocument()
     expect(screen.getByText('Qty')).toBeInTheDocument()
     expect(screen.getByText('Avg.Cost')).toBeInTheDocument()
