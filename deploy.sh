@@ -36,6 +36,23 @@ cd "$SCRIPT_DIR"
 
 MODE="${1:-update}"
 
+# ── SSH connection sharing ───────────────────────────────────────────────────
+# The script makes several SSH calls (sync, optional DB copy, restart probe,
+# restart). Without multiplexing each one re-authenticates — i.e. multiple
+# password prompts when key auth isn't set up. ControlMaster authenticates
+# once and every later call reuses the same connection.
+SSH_CTL="${HOME}/.ssh/deploy-ctl-%r@%h-%p"
+nas_ssh() {
+  ssh -p "${NAS_PORT}" \
+      -o ControlMaster=auto -o ControlPath="${SSH_CTL}" -o ControlPersist=300 \
+      "${NAS_USER}@${NAS_HOST}" "$@"
+}
+cleanup_ssh() {
+  ssh -p "${NAS_PORT}" -o ControlPath="${SSH_CTL}" -O exit \
+      "${NAS_USER}@${NAS_HOST}" 2>/dev/null || true
+}
+trap cleanup_ssh EXIT
+
 # ── 1. Build fresh frontend bundle ──────────────────────────────────────────
 echo "→ Building frontend..."
 (cd frontend && npm run build)
@@ -63,14 +80,13 @@ COPYFILE_DISABLE=1 tar czf - \
   --exclude='investments.db' --exclude='demoinvestment.db' --exclude='newinvestments.db' \
   --exclude='latest.db' \
   --exclude='.jwt_secret' \
-  . | ssh -p "${NAS_PORT}" "${NAS_USER}@${NAS_HOST}" \
+  . | nas_ssh \
     "tar xzf - -C '${NAS_DIR}' && chmod -R a+rX '${NAS_DIR}/frontend/dist' && find '${NAS_DIR}' -name '._*' -delete"
 
 # ── 3. Initial mode: bring over the live DB from the existing deployment ────
 if [ "$MODE" = "initial" ]; then
   echo "→ Copying live DB from existing deployment (${NAS_DIR_OLD}) ..."
-  ssh -p "${NAS_PORT}" "${NAS_USER}@${NAS_HOST}" \
-    "cp '${NAS_DIR_OLD}/backend/investments.db' '${NAS_DIR}/backend/investments.db'"
+  nas_ssh "cp '${NAS_DIR_OLD}/backend/investments.db' '${NAS_DIR}/backend/investments.db'"
 fi
 
 # ── 4. Restart the container ─────────────────────────────────────────────────
@@ -82,8 +98,7 @@ fi
 # setup on the NAS); falls back to SUDO_PASS, then to an interactive prompt
 # (read -s keeps the password out of shell history and process listings).
 echo "→ Restarting container on NAS ..."
-if ssh -p "${NAS_PORT}" "${NAS_USER}@${NAS_HOST}" \
-     "cd '${NAS_DIR}' && sudo -n /usr/local/bin/docker compose up -d --build --force-recreate"; then
+if nas_ssh "cd '${NAS_DIR}' && sudo -n /usr/local/bin/docker compose up -d --build --force-recreate"; then
   echo "✓ Restarted (passwordless sudo)"
 else
   if [ -z "${SUDO_PASS:-}" ] && [ -t 0 ]; then
@@ -92,8 +107,7 @@ else
     echo
   fi
   if [ -n "${SUDO_PASS:-}" ]; then
-    ssh -p "${NAS_PORT}" "${NAS_USER}@${NAS_HOST}" \
-      "cd '${NAS_DIR}' && printf '%s\\n' '${SUDO_PASS}' | sudo -S /usr/local/bin/docker compose up -d --build --force-recreate"
+    nas_ssh "cd '${NAS_DIR}' && printf '%s\\n' '${SUDO_PASS}' | sudo -S /usr/local/bin/docker compose up -d --build --force-recreate"
   else
     echo "ℹ  Skipped — restart the container manually:"
     echo "   ssh -p ${NAS_PORT} ${NAS_USER}@${NAS_HOST}"
