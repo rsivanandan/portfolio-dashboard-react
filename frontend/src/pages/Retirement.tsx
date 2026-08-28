@@ -382,7 +382,7 @@ function RefillPanel({ refill, config }: { refill: RefillSignal; config: Retirem
   const fromGrowth = refill.source === 'growth'
 
   return (
-    <div className="rounded-xl border border-border bg-card/60 px-4 py-3.5">
+    <div className="h-full rounded-xl border border-border bg-card/60 px-4 py-3.5 flex flex-col">
       <div className="text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground">
         Refill Strategy
       </div>
@@ -422,8 +422,18 @@ function RefillPanel({ refill, config }: { refill: RefillSignal; config: Retirem
         )}
       </div>
 
+      {/* The playbook — the standing rules, spelled out */}
+      <div className="border-t border-border/60 pt-2 mb-2.5">
+        <div className="text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground mb-1.5">The playbook</div>
+        <ul className="space-y-1 text-[11px] leading-snug text-muted-foreground">
+          <li><span className="text-emerald-600 dark:text-emerald-400 font-semibold">Markets up:</span> refill Bucket 1 by harvesting Growth gains; top up Bucket 2 too.</li>
+          <li><span className="text-rose-600 dark:text-rose-400 font-semibold">Markets down:</span> refill from Bucket 2 (debt); leave equity untouched to recover.</li>
+          <li><span className="text-amber-600 dark:text-amber-400 font-semibold">Long crash:</span> if Bucket 2 also runs dry, spend Bucket 1 down without refilling — that's what the {config.bucket1_years}+{config.bucket2_years} yrs of cover is for.</li>
+        </ul>
+      </div>
+
       {/* Trigger selector */}
-      <div className="flex items-center justify-between gap-2">
+      <div className="mt-auto flex items-center justify-between gap-2">
         <span className="text-[10px] text-muted-foreground leading-tight">Refill when Bucket 1 falls below</span>
         <div className="inline-flex rounded-lg border border-border overflow-hidden text-[11px] shrink-0">
           {[1, 1.5, 2].map((y) => (
@@ -686,21 +696,23 @@ export default function Retirement() {
               ))}
             </div>
 
-            {/* Right — affordable spend + refill strategy */}
-            <div className="lg:w-52 shrink-0 flex flex-col gap-3">
-              <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/40 px-4 py-3.5 text-center">
-                <div className="text-[10px] font-semibold tracking-[0.08em] uppercase text-emerald-700 dark:text-emerald-400">Affordable Spend</div>
-                <div className="mt-1 text-2xl font-bold leading-none text-emerald-700 dark:text-emerald-300">{formatINR(data.monthly_affordable)}</div>
-                <div className="mt-0.5 text-[11px] text-emerald-700/80 dark:text-emerald-400/80 font-medium">per month</div>
-                <div className="mt-2 pt-2 border-t border-emerald-200/70 dark:border-emerald-900/70 flex items-center justify-between text-[11px]">
-                  <span className="text-muted-foreground">per year</span>
-                  <span className="font-mono font-semibold text-foreground">{formatINR(annual)}</span>
-                </div>
-                <div className="mt-1 flex items-center justify-between text-[11px]">
-                  <span className="text-muted-foreground">withdrawal</span>
-                  <span className="font-mono font-semibold text-foreground">{config.swr_pct}%/yr</span>
-                </div>
+            {/* Right — affordable spend (as before) */}
+            <div className="lg:w-44 shrink-0 rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/40 px-4 py-3.5 text-center">
+              <div className="text-[10px] font-semibold tracking-[0.08em] uppercase text-emerald-700 dark:text-emerald-400">Affordable Spend</div>
+              <div className="mt-1 text-2xl font-bold leading-none text-emerald-700 dark:text-emerald-300">{formatINR(data.monthly_affordable)}</div>
+              <div className="mt-0.5 text-[11px] text-emerald-700/80 dark:text-emerald-400/80 font-medium">per month</div>
+              <div className="mt-2 pt-2 border-t border-emerald-200/70 dark:border-emerald-900/70 flex items-center justify-between text-[11px]">
+                <span className="text-muted-foreground">per year</span>
+                <span className="font-mono font-semibold text-foreground">{formatINR(annual)}</span>
               </div>
+              <div className="mt-1 flex items-center justify-between text-[11px]">
+                <span className="text-muted-foreground">withdrawal</span>
+                <span className="font-mono font-semibold text-foreground">{config.swr_pct}%/yr</span>
+              </div>
+            </div>
+
+            {/* Far right — refill strategy, with room to explain itself */}
+            <div className="lg:w-72 shrink-0 self-stretch">
               <RefillPanel refill={data.refill} config={config} />
             </div>
           </div>
