@@ -383,45 +383,49 @@ function RefillPanel({ refill, config }: { refill: RefillSignal; config: Retirem
 
   return (
     <div className="rounded-xl border border-border bg-card/60 px-4 py-3.5">
-      <div className="text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground mb-2">
+      <div className="text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground">
         Refill Strategy
       </div>
-
-      {/* Market gate */}
-      <div className="text-[11px] leading-snug mb-2">
-        {marketKnown ? (
-          <>
-            <span className="text-muted-foreground">NIFTY 12m </span>
-            <span className={cn('font-mono font-semibold', refill.market === 'up' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
-              {refill.nifty_12m_pct != null && refill.nifty_12m_pct >= 0 ? '+' : ''}{refill.nifty_12m_pct?.toFixed(1)}%
-            </span>
-            <span className="block mt-0.5 text-foreground font-medium">
-              {fromGrowth ? 'Refill from Growth — harvest gains' : 'Refill from Safety — don’t sell equity'}
-            </span>
-          </>
-        ) : (
-          <span className="text-muted-foreground">Market signal unavailable</span>
-        )}
+      <div className="text-[10.5px] text-muted-foreground leading-snug mt-0.5 mb-2">
+        When Bucket 1 runs low, where does the top-up come from?
       </div>
 
-      {/* Action status */}
+      {/* Action status first — is anything due? */}
       <div className={cn(
-        'text-[11px] leading-snug rounded-lg px-2.5 py-2 mb-2.5 border',
+        'text-[11px] leading-snug rounded-lg px-2.5 py-2 mb-2 border',
         refill.action_needed
           ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300'
           : 'border-emerald-200 bg-emerald-50/60 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-400',
       )}>
         {refill.action_needed ? (
-          <>⚠ Bucket 1 at {refill.b1_years} yrs (below {refill.trigger_years}) — top up {formatINR(refill.topup_amount)}{refill.source ? ` from ${refill.source === 'growth' ? 'Growth' : 'Safety'}` : ''}</>
+          <>⚠ Refill due: Bucket 1 is down to {refill.b1_years} yrs of spending — move {formatINR(refill.topup_amount)}{refill.source ? ` from ${refill.source === 'growth' ? 'Growth' : 'Safety'}` : ''} to refill it</>
         ) : (
-          <>✓ No action — Bucket 1 covers {refill.b1_years ?? '—'} yrs (trigger &lt; {refill.trigger_years})</>
+          <>✓ Nothing to do — Bucket 1 holds {refill.b1_years ?? '—'} yrs of spending; refill only becomes due below {refill.trigger_years} yrs</>
+        )}
+      </div>
+
+      {/* Market gate — which bucket funds the refill */}
+      <div className="text-[11px] leading-snug mb-2.5">
+        {marketKnown ? (
+          <>
+            <span className="text-foreground font-medium">
+              {fromGrowth ? 'Source when due: Growth' : 'Source when due: Safety'}
+            </span>
+            <span className="block mt-0.5 text-muted-foreground">
+              {fromGrowth
+                ? <>markets are up (NIFTY <span className="font-mono text-emerald-600 dark:text-emerald-400">+{refill.nifty_12m_pct?.toFixed(1)}%</span> over 12m) — harvest equity gains</>
+                : <>markets are down (NIFTY <span className="font-mono text-rose-600 dark:text-rose-400">{refill.nifty_12m_pct?.toFixed(1)}%</span> over 12m) — don't sell equity at a loss; draw on debt instead</>}
+            </span>
+          </>
+        ) : (
+          <span className="text-muted-foreground">Market signal unavailable — source undetermined</span>
         )}
       </div>
 
       {/* Trigger selector */}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Trigger</span>
-        <div className="inline-flex rounded-lg border border-border overflow-hidden text-[11px]">
+        <span className="text-[10px] text-muted-foreground leading-tight">Refill when Bucket 1 falls below</span>
+        <div className="inline-flex rounded-lg border border-border overflow-hidden text-[11px] shrink-0">
           {[1, 1.5, 2].map((y) => (
             <button
               key={y}
