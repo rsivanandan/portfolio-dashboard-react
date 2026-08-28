@@ -77,6 +77,13 @@ fi
 # The image is runtime-only (source is a bind mount), so code changes never
 # change the image SHA — `up -d` alone would NOT restart a running container.
 # --force-recreate guarantees the new code is actually loaded.
+# When run interactively without SUDO_PASS, prompt for it (read -s keeps the
+# password out of shell history and process listings).
+if [ -z "${SUDO_PASS:-}" ] && [ -t 0 ]; then
+  printf "NAS sudo password (Enter to skip restart): "
+  read -rs SUDO_PASS
+  echo
+fi
 if [ -n "${SUDO_PASS:-}" ]; then
   echo "→ Restarting container on NAS ..."
   ssh -p "${NAS_PORT}" "${NAS_USER}@${NAS_HOST}" \
