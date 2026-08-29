@@ -12,12 +12,13 @@ Design decisions:
 
 import os
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, field_validator
 
@@ -200,20 +201,70 @@ class UserOut(BaseModel):
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-def _set_refresh_cookie(response: Response, token: str):
+def _request_is_https(request: Request) -> bool:
+    """True when the client reached us over HTTPS — directly or via a
+    TLS-terminating proxy (Cloudflare Tunnel / nginx set X-Forwarded-Proto)."""
+    fwd = request.headers.get("x-forwarded-proto", "")
+    return request.url.scheme == "https" or fwd.split(",")[0].strip() == "https"
+
+
+def _set_refresh_cookie(response: Response, token: str, request: Request):
+    # Secure flag per-request: HTTPS visitors (internet, via tunnel) get a
+    # Secure cookie; plain-HTTP LAN access keeps working without one.
     response.set_cookie(
         key="refresh_token",
         value=token,
         httponly=True,
-        secure=False,       # set to True behind HTTPS in production
+        secure=_request_is_https(request),
         samesite="lax",
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
         path="/api/auth",
     )
 
 
+# ── Login rate limiting ───────────────────────────────────────────────────────
+# In-memory, per (username, client IP): after MAX_FAILURES failed attempts
+# within WINDOW seconds, further attempts get 429 until the window passes.
+# Essential once the login page is reachable from the internet.
+_LOGIN_FAILURES: dict = {}
+_LOGIN_MAX_FAILURES = 5
+_LOGIN_WINDOW_SECS = 15 * 60
+
+
+def _client_ip(request: Request) -> str:
+    # Behind Cloudflare the socket peer is the tunnel daemon — prefer the
+    # real client IP header when present.
+    return (
+        request.headers.get("cf-connecting-ip")
+        or (request.headers.get("x-forwarded-for", "").split(",")[0].strip())
+        or (request.client.host if request.client else "unknown")
+    )
+
+
+def _rate_limit_key(username: str, request: Request) -> tuple:
+    return (username.lower(), _client_ip(request))
+
+
+def _check_login_allowed(username: str, request: Request):
+    now = time.time()
+    key = _rate_limit_key(username, request)
+    fails = [t for t in _LOGIN_FAILURES.get(key, []) if now - t < _LOGIN_WINDOW_SECS]
+    _LOGIN_FAILURES[key] = fails
+    if len(fails) >= _LOGIN_MAX_FAILURES:
+        retry_in = int(_LOGIN_WINDOW_SECS - (now - fails[0]))
+        raise HTTPException(429, f"Too many failed attempts — try again in {max(retry_in, 1)} seconds")
+
+
+def _record_login_failure(username: str, request: Request):
+    _LOGIN_FAILURES.setdefault(_rate_limit_key(username, request), []).append(time.time())
+
+
+def _clear_login_failures(username: str, request: Request):
+    _LOGIN_FAILURES.pop(_rate_limit_key(username, request), None)
+
+
 @auth_router.post("/signup", status_code=201)
-def signup(body: SignupRequest, response: Response):
+def signup(body: SignupRequest, response: Response, request: Request):
     ensure_users_table()
     conn = get_conn()
     try:
@@ -240,7 +291,7 @@ def signup(body: SignupRequest, response: Response):
         if is_first:
             access = create_access_token(user_id, body.username, is_admin=True)
             refresh = create_refresh_token(user_id)
-            _set_refresh_cookie(response, refresh)
+            _set_refresh_cookie(response, refresh, request)
             return {
                 "access_token": access,
                 "token_type": "bearer",
@@ -260,7 +311,8 @@ def signup(body: SignupRequest, response: Response):
 
 
 @auth_router.post("/login")
-def login(body: LoginRequest, response: Response):
+def login(body: LoginRequest, response: Response, request: Request):
+    _check_login_allowed(body.username, request)
     ensure_users_table()
     conn = get_conn()
     try:
@@ -270,17 +322,20 @@ def login(body: LoginRequest, response: Response):
         ).fetchone()
 
         if not row:
+            _record_login_failure(body.username, request)
             raise HTTPException(401, "Invalid username or password")
 
         if not bcrypt.checkpw(body.password.encode(), row["hashed_password"].encode()):
+            _record_login_failure(body.username, request)
             raise HTTPException(401, "Invalid username or password")
 
         if not row["is_approved"]:
             raise HTTPException(403, "Account pending admin approval")
 
+        _clear_login_failures(body.username, request)
         access = create_access_token(row["id"], row["username"], bool(row["is_admin"]))
         refresh = create_refresh_token(row["id"])
-        _set_refresh_cookie(response, refresh)
+        _set_refresh_cookie(response, refresh, request)
 
         return {
             "access_token": access,
@@ -298,7 +353,7 @@ def login(body: LoginRequest, response: Response):
 
 
 @auth_router.post("/refresh")
-def refresh(response: Response, refresh_token: Optional[str] = Cookie(default=None)):
+def refresh(response: Response, request: Request, refresh_token: Optional[str] = Cookie(default=None)):
     if not refresh_token:
         raise HTTPException(401, "No refresh token")
 
@@ -319,7 +374,7 @@ def refresh(response: Response, refresh_token: Optional[str] = Cookie(default=No
 
     access = create_access_token(row["id"], row["username"], bool(row["is_admin"]))
     new_refresh = create_refresh_token(row["id"])
-    _set_refresh_cookie(response, new_refresh)
+    _set_refresh_cookie(response, new_refresh, request)
 
     return {
         "access_token": access,

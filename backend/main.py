@@ -254,7 +254,7 @@ def _nifty_12m_return():
     pct = None
     try:
         import yfinance as yf
-        hist = yf.Ticker("^NSEI").history(period="1y", interval="1d")
+        hist = yf.Ticker("^NSEI").history(period="1y", interval="1d", timeout=10)
         if len(hist) > 1:
             first = float(hist["Close"].iloc[0])
             last = float(hist["Close"].iloc[-1])

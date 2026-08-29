@@ -195,6 +195,10 @@ def client(tmp_path):
     main.MODE_FILE = str(tmp_path / "nonexistent_mode.txt")
     original_dummy = main.DUMMY_PATH
     main.DUMMY_PATH = str(tmp_path / "nonexistent_dummy.db")
+    # Stub the NIFTY 12m market-gate cache so tests never hit the network
+    import time as _time
+    original_nifty = dict(main._nifty_12m_cache)
+    main._nifty_12m_cache.update(ts=_time.time() + 10**9, pct=5.0)
 
     main.app.dependency_overrides[get_current_user] = lambda: MOCK_USER
 
@@ -204,4 +208,6 @@ def client(tmp_path):
     main.DB_PATH = original
     main.MODE_FILE = original_mode_file
     main.DUMMY_PATH = original_dummy
+    main._nifty_12m_cache.clear()
+    main._nifty_12m_cache.update(original_nifty)
     main.app.dependency_overrides.clear()

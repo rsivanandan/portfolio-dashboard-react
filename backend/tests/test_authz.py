@@ -43,3 +43,17 @@ def test_non_admin_can_still_use_user_features(client):
     r = client.put("/api/retirement/config", json={
         "swr_pct": 4, "inflation_pct": 6, "bucket1_years": 3, "bucket2_years": 5, "cash_amount": 0})
     assert r.status_code == 200
+
+
+def test_login_rate_limited_after_failures(client):
+    import auth
+    auth._LOGIN_FAILURES.clear()
+    for _ in range(5):
+        r = client.post("/api/auth/login", json={"username": "nobody", "password": "wrong"})
+        assert r.status_code == 401
+    r = client.post("/api/auth/login", json={"username": "nobody", "password": "wrong"})
+    assert r.status_code == 429
+    # a different username from the same IP is not blocked
+    r = client.post("/api/auth/login", json={"username": "someoneelse", "password": "wrong"})
+    assert r.status_code == 401
+    auth._LOGIN_FAILURES.clear()
