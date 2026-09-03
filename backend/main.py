@@ -1477,16 +1477,93 @@ def nifty_history():
     try:
         import yfinance as yf
         nifty = yf.Ticker("^NSEI")
-        hist = nifty.history(period="30d", interval="1d")
+        # 100d so the rolling 30-day high still has a full lookback for the
+        # OLDEST of the 30 days we actually display, not just the newest
+        # (30 trading days spans ~42 calendar days, plus the 30-day window
+        # behind that oldest day — 100d leaves comfortable headroom).
+        hist = nifty.history(period="100d", interval="1d")
         hist.index = hist.index.tz_localize(None)
-        hist = hist[hist.index.dayofweek < 5].tail(14)
+        hist = hist[hist.index.dayofweek < 5]
+        closes = hist["Close"]
+        # Day-over-day % move, computed before the tail() slice so the first
+        # of the last 30 days still has a prior close to compare against.
+        pct_change = closes.pct_change() * 100
+        # How far today sits below its own trailing 30-CALENDAR-day peak — a
+        # dip-buying signal: a single red day is noise, this is a real drawdown.
+        # rolling('30D') is time-based (not row-count), so it's still correct
+        # across the weekend/holiday gaps left by the weekday filter above.
+        rolling_high = closes.rolling("30D").max()
+        pct_from_high = (closes / rolling_high - 1) * 100
+        hist = hist.tail(30)
+        pct_change = pct_change.tail(30)
+        pct_from_high = pct_from_high.tail(30)
         return [
-            {"date": d.strftime("%d %b"), "close": round(float(v), 2)}
-            for d, v in zip(hist.index, hist["Close"], strict=False)
+            {
+                "date": d.strftime("%d %b"),
+                "close": round(float(c), 2),
+                "pct_change": clean(round(float(p), 2)),
+                "pct_from_high": clean(round(float(h), 2)),
+            }
+            for d, c, p, h in zip(hist.index, hist["Close"], pct_change, pct_from_high, strict=False)
         ]
     except Exception as exc:
         logger.warning("nifty_history failed: %s", exc)
         return []
+
+
+@app.get("/api/market/asset-pulse")
+def asset_pulse():
+    """Equity segments (large/mid/small-cap) and Gold/Silver/Crude Oil: each
+    asset's price relative to its own 200-day moving average, plus last
+    month's and this year's plain % change as supporting numbers.
+
+    An earlier version of this led with "% below all-time high" — but that
+    answers "did this just make news", not "is this expensive right now",
+    which is the actual question (e.g. is smallcap overheated, is silver
+    cheap). A stale multi-year peak (or, per an asset with a genuinely
+    sustained new high, a peak that just isn't the interesting number) tells
+    you nothing about today's valuation. Deviation from the trailing 200-day
+    average is the standard "extended vs. its own recent trend" read: a large
+    positive number means the price has run up fast relative to where it's
+    been trading, a large negative number means it's lagging its own trend —
+    both more decision-relevant for "is this priced right" than ATH distance.
+    """
+    try:
+        import yfinance as yf
+        tickers = {
+            "large": ("^CNX100", "Large Cap (Nifty 100)"),
+            "mid": ("NIFTYMIDCAP150.NS", "Mid Cap (Nifty Midcap 150)"),
+            "small": ("NIFTYSMLCAP250.NS", "Small Cap (Nifty Smallcap 250)"),
+            "gold": ("GC=F", "Gold"),
+            "silver": ("SI=F", "Silver"),
+            "oil": ("CL=F", "Crude Oil"),
+        }
+        summary = {}
+        for key, (sym, label) in tickers.items():
+            # 2y comfortably covers the 200-trading-day average with room to
+            # spare, without the cost of a 5y fetch this no longer needs.
+            hist = yf.Ticker(sym).history(period="2y", interval="1d")
+            hist.index = hist.index.tz_localize(None)
+            hist = hist[hist.index.dayofweek < 5]
+            closes = hist["Close"]
+            last = float(closes.iloc[-1])
+            last_date = closes.index[-1]
+            sma200 = float(closes.rolling(200).mean().iloc[-1])
+            month_base = float(closes.tail(22).iloc[0])
+            # last_date.year (not datetime.now()) so this can't disagree with
+            # which trading year "last" itself actually falls in.
+            year_closes = closes[closes.index.year == last_date.year]
+            pct_ytd = clean(round((last / float(year_closes.iloc[0]) - 1) * 100, 2)) if len(year_closes) else None
+            summary[key] = {
+                "label": label,
+                "pct_vs_200dma": clean(round((last / sma200 - 1) * 100, 2)),
+                "pct_month": clean(round((last / month_base - 1) * 100, 2)),
+                "pct_ytd": pct_ytd,
+            }
+        return summary
+    except Exception as exc:
+        logger.warning("asset_pulse failed: %s", exc)
+        return {}
 
 
 # ── REFRESH ──────────────────────────────────────────────────────────────────

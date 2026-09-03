@@ -221,6 +221,10 @@ export interface TickerItem {
 export interface NiftyPoint {
   date: string
   close: number
+  /** Day-over-day % move; null for the oldest point in the window (no prior close). */
+  pct_change: number | null
+  /** % below the trailing 30-calendar-day high; 0 when this day IS the high. */
+  pct_from_high: number | null
 }
 
 export const useSummary = () => useQuery({ queryKey: ['summary'], queryFn: () => get<Summary>('/summary') })
@@ -251,6 +255,24 @@ export const useMarketTicker = () =>
   useQuery({ queryKey: ['ticker'], queryFn: () => get<TickerItem[]>('/market/ticker'), staleTime: 60000 })
 export const useNiftyHistory = () =>
   useQuery({ queryKey: ['nifty-hist'], queryFn: () => get<NiftyPoint[]>('/market/nifty-history'), staleTime: 60000 })
+
+export interface AssetPulseEntry {
+  label: string
+  /** % above (+) or below (-) the trailing 200-day average — how extended the price is vs its own recent trend. */
+  pct_vs_200dma: number | null
+  /** Plain % change over the last ~22 trading days. */
+  pct_month: number | null
+  /** Plain % change since the first trading day of the current calendar year. */
+  pct_ytd: number | null
+}
+export type AssetKey = 'large' | 'mid' | 'small' | 'gold' | 'silver' | 'oil'
+export type AssetPulseData = Partial<Record<AssetKey, AssetPulseEntry>>
+export const useAssetPulse = () =>
+  useQuery({
+    queryKey: ['asset-pulse'],
+    queryFn: () => get<AssetPulseData>('/market/asset-pulse'),
+    staleTime: 60000,
+  })
 
 // Everything derived from PF rows / opening balances — admin edits must bust all of it
 const PF_QUERY_KEYS = [['pf'], ['pf-user1'], ['pf-user2'], ['summary'], ['admin-pf']] as const

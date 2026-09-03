@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  AreaChart, Area, LineChart, Line,
+  AreaChart, Area, LineChart, Line, ComposedChart, LabelList,
 } from 'recharts'
 import { useSummary, useTimeline, useMonthly, useSnapshots, useSaveSnapshot, useMutualFunds } from '../hooks/useApi'
 import { StatCard, Spinner, Card, PageHeader, Btn, TabBar } from '../components/UI'
@@ -32,6 +32,51 @@ const ChartTT = ({ active, payload, label }: TTProps) => {
   )
 }
 
+interface BarLabelProps { x?: number; y?: number; width?: number; height?: number; value?: number }
+
+// Bars are ~28px wide, so a full "₹4,00,000" will not fit — these labels use
+// a short form (₹4.0L, ₹44K) and the exact figure stays in the tooltip.
+function compactINR(v: number): string {
+  const abs = Math.abs(v)
+  const sign = v < 0 ? '-' : ''
+  if (abs >= 10000000) return `${sign}₹${(abs / 10000000).toFixed(1)}Cr`
+  if (abs >= 1000000) return `${sign}₹${Math.round(abs / 100000)}L`
+  if (abs >= 100000) return `${sign}₹${(abs / 100000).toFixed(1)}L`
+  return `${sign}₹${Math.round(abs / 1000)}K`
+}
+
+// Measures against the bar's own SVG font metrics (not a guess) so the label
+// only renders when it will actually fit horizontally at this font size.
+let _measureCtx: CanvasRenderingContext2D | null = null
+function textWidth(text: string): number {
+  if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d')
+  if (!_measureCtx) return text.length * 6
+  _measureCtx.font = '600 8px system-ui, sans-serif'
+  return _measureCtx.measureText(text).width
+}
+
+// Value label drawn horizontally inside its bar, in white. A bar too short
+// to hold a line of text falls back to a blue label just above it instead
+// (white on the card background would be invisible in light mode); a bar
+// narrower than the text renders nothing rather than an overlapping smear.
+const MonthBarLabel = ({ x = 0, y = 0, width = 0, height = 0, value = 0 }: BarLabelProps) => {
+  const text = compactINR(value)
+  if (textWidth(text) > width - 2) return null
+  const inside = height >= 16
+  return (
+    <text
+      x={x + width / 2}
+      y={inside ? y + 11 : y - 4}
+      textAnchor="middle"
+      fill={inside ? '#ffffff' : '#3b82f6'}
+      fontSize={8}
+      fontWeight={600}
+    >
+      {text}
+    </text>
+  )
+}
+
 type InsightTab = 'overview' | 'timeline' | 'snapshots'
 
 export default function Insights() {
@@ -56,6 +101,16 @@ export default function Insights() {
     if (totalNow > 0) flows.push({ amount: totalNow, date: new Date().toISOString().slice(0, 10) })
     return flows.length > 1 ? calculateXIRR(flows) : null
   })()
+
+  // Running total of invested amount across years — read straight off the
+  // chart instead of adding the bars up by eye.
+  const timelineCum = useMemo(() => {
+    let run = 0
+    return (timeline ?? []).map((t) => {
+      run += t.invested || 0
+      return { ...t, cumulative: Math.round(run * 100) / 100 }
+    })
+  }, [timeline])
 
   const cagr = (() => {
     if (!snapshots || snapshots.length < 2) return null
@@ -169,17 +224,57 @@ export default function Insights() {
             {tlLoading ? <Spinner /> : !timeline?.length ? (
               <p className="text-muted-foreground text-sm text-center py-8">No transaction data with purchase dates found.</p>
             ) : (
-              <ResponsiveContainer width="100%" height={360}>
-                <BarChart data={timeline} margin={{ top: 10, right: 20, left: 60, bottom: 5 }}>
-                  <CartesianGrid stroke={CT.grid} strokeDasharray="3 3" />
-                  <XAxis dataKey="year" tick={{ fill: CT.text }} />
-                  <YAxis tickFormatter={(v) => formatINR(v)} tick={{ fill: CT.text, fontSize: 11 }} />
-                  <Tooltip content={<ChartTT />} />
-                  <Legend wrapperStyle={{ color: CT.text }} />
-                  <Bar dataKey="invested" name="Invested" fill="#f59e0b" stackId="a" />
-                  <Bar dataKey="gains" name="Returns" fill="#22c55e" stackId="a" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <>
+                <ResponsiveContainer width="100%" height={380}>
+                  <ComposedChart data={timelineCum} margin={{ top: 28, right: 70, left: 60, bottom: 5 }}>
+                    <CartesianGrid stroke={CT.grid} strokeDasharray="3 3" />
+                    <XAxis dataKey="year" tick={{ fill: CT.text }} />
+                    <YAxis yAxisId="left" tickFormatter={(v) => formatINR(v)} tick={{ fill: CT.text, fontSize: 11 }} />
+                    {/* Cumulative runs an order of magnitude above the per-year
+                        bars, so it needs its own scale or the bars flatten. */}
+                    <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => formatINR(v)} tick={{ fill: '#8b5cf6', fontSize: 11 }} />
+                    <Tooltip content={<ChartTT />} />
+                    <Legend wrapperStyle={{ color: CT.text }} />
+                    <Bar yAxisId="left" dataKey="invested" name="Invested" fill="#f59e0b" stackId="a" />
+                    <Bar yAxisId="left" dataKey="gains" name="Returns" fill="#22c55e" stackId="a" radius={[4, 4, 0, 0]} />
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="cumulative"
+                      name="Cumulative Invested"
+                      stroke="#8b5cf6"
+                      strokeWidth={2}
+                      strokeDasharray="5 3"
+                      dot={{ r: 3, fill: '#8b5cf6', stroke: '#8b5cf6' }}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+
+                {/* The cumulative line crosses the bars, so its values are
+                    listed here rather than as labels sitting on top of them. */}
+                <div className="mt-4">
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                    Cumulative Invested by Year
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-2">
+                    {timelineCum.map((t) => (
+                      <div key={t.year} className="rounded-lg border border-border bg-muted/40 px-2 py-2 text-center">
+                        <div className="text-[11px] text-muted-foreground font-mono">{t.year}</div>
+                        <div className="text-[13px] font-mono font-semibold text-violet-600 dark:text-violet-400">
+                          {formatINR(t.cumulative)}
+                        </div>
+                        <div className="text-[10px] font-mono text-amber-600 dark:text-amber-400">
+                          +{formatINR(t.invested)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Running total of purchase cost (amber = added that year). Covers units still held today, so it
+                    tracks the invested bars rather than every contribution ever made.
+                  </p>
+                </div>
+              </>
             )}
           </Card>
 
@@ -188,13 +283,15 @@ export default function Insights() {
               <p className="text-muted-foreground text-sm text-center py-8">No monthly data available.</p>
             ) : (
               <>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={monthly} margin={{ top: 5, right: 20, left: 60, bottom: 40 }}>
+                <ResponsiveContainer width="100%" height={340}>
+                  <BarChart data={monthly} margin={{ top: 16, right: 20, left: 60, bottom: 40 }}>
                     <CartesianGrid stroke={CT.grid} strokeDasharray="3 3" />
                     <XAxis dataKey="month" tick={{ fill: CT.text, fontSize: 10 }} angle={-45} textAnchor="end" />
                     <YAxis tickFormatter={(v) => formatINR(v)} tick={{ fill: CT.text, fontSize: 11 }} />
                     <Tooltip content={<ChartTT />} />
-                    <Bar dataKey="amount" name="Investment" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="amount" name="Investment" fill="#3b82f6" radius={[4, 4, 0, 0]}>
+                      <LabelList dataKey="amount" content={<MonthBarLabel />} />
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
                 <div className="grid grid-cols-2 gap-4 mt-4">
