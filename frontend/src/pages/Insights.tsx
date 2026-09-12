@@ -10,7 +10,14 @@ import { XIRRCard } from '../components/XIRRCard'
 import { calculateXIRR } from '../utils/xirrUtils'
 import { formatINR, CHART_THEME_LIGHT, CHART_THEME_DARK } from '../utils/format'
 import { useTheme } from '../hooks/useTheme'
-import { IconCamera } from '@tabler/icons-react'
+import { IconCamera, IconChartLine, IconFileText } from '@tabler/icons-react'
+import AIBriefing from '../components/AIBriefing'
+import InsightsPanel from '../components/InsightsPanel'
+import { RebalanceCard, TaxCard, RiskCard } from '../components/AllocationCards'
+import RetirementReadinessAI from '../components/RetirementReadinessAI'
+import HoldingNews from '../components/HoldingNews'
+import AskAssistant from '../components/AskAssistant'
+import { ScenarioModal, ReportModal } from '../components/AITools'
 
 const PIE_COLORS = ['#8b5cf6', '#22c55e']
 
@@ -77,10 +84,12 @@ const MonthBarLabel = ({ x = 0, y = 0, width = 0, height = 0, value = 0 }: BarLa
   )
 }
 
-type InsightTab = 'overview' | 'timeline' | 'snapshots'
+type InsightTab = 'overview' | 'timeline' | 'snapshots' | 'ai'
 
 export default function Insights() {
   const [tab, setTab] = useState<InsightTab>('overview')
+  const [showScenario, setShowScenario] = useState(false)
+  const [showReport, setShowReport] = useState(false)
   const { theme } = useTheme()
   const CT = theme === 'dark' ? CHART_THEME_DARK : CHART_THEME_LIGHT
 
@@ -122,12 +131,24 @@ export default function Insights() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Insights" subtitle="Portfolio overview, timeline & growth">
+      <PageHeader title="Insights" subtitle="Portfolio overview, timeline, growth & AI">
         {tab === 'snapshots' && (
           <Btn onClick={() => saveSnap.mutate()} loading={saveSnap.isPending} variant="primary">
             <IconCamera size={14} />
             Save Snapshot
           </Btn>
+        )}
+        {tab === 'ai' && (
+          <>
+            <Btn onClick={() => setShowScenario(true)}>
+              <IconChartLine size={14} />
+              Scenario
+            </Btn>
+            <Btn onClick={() => setShowReport(true)}>
+              <IconFileText size={14} />
+              Report
+            </Btn>
+          </>
         )}
       </PageHeader>
 
@@ -136,6 +157,7 @@ export default function Insights() {
           { key: 'overview', label: 'Overview' },
           { key: 'timeline', label: 'Timeline' },
           { key: 'snapshots', label: 'Snapshots' },
+          { key: 'ai', label: 'AI' },
         ]}
         active={tab}
         onChange={(k) => setTab(k as InsightTab)}
@@ -472,6 +494,32 @@ export default function Insights() {
               </div>
             </Card>
           )}
+        </>
+      )}
+
+      {/* ── AI ────────────────────────────────────────────────────────────── */}
+      {tab === 'ai' && (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <AIBriefing />
+            <InsightsPanel />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <RebalanceCard />
+            <TaxCard />
+            <RiskCard />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <RetirementReadinessAI />
+            <HoldingNews />
+          </div>
+
+          <AskAssistant />
+
+          {showScenario && <ScenarioModal onClose={() => setShowScenario(false)} />}
+          {showReport && <ReportModal onClose={() => setShowReport(false)} />}
         </>
       )}
     </div>
