@@ -674,3 +674,289 @@ export function useUploadStocks() {
     },
   })
 }
+
+// ── AI: News briefing, portfolio insights, Q&A ─────────────────────────────
+
+export interface AIStatus {
+  ai_enabled: boolean
+  model: string | null
+}
+
+export interface BriefingHeadline {
+  title: string
+  url: string
+  source: string
+  published: string | null
+}
+
+export interface BriefingItem {
+  title: string
+  link?: string
+  takeaway: string
+}
+
+export interface Briefing {
+  headlines: BriefingHeadline[]
+  brief: string | null
+  items: BriefingItem[]
+  ai_enabled?: boolean
+}
+
+export interface InsightText {
+  title: string
+  detail: string
+}
+
+export interface AITopHolding {
+  name: string
+  value: number
+  ret_pct: number
+}
+
+export interface AISummaryTotals {
+  mf_invested: number
+  mf_now: number
+  stocks_invested: number
+  stocks_now: number
+  pf_invested: number
+  pf_now: number
+  total_invested: number
+  total_now: number
+}
+
+export interface AIInsightsMetrics {
+  as_of?: string
+  totals: AISummaryTotals
+  overall_return_pct: number
+  mf_count: number
+  stock_count: number
+  top_funds: AITopHolding[]
+  top_stocks: { ticker: string; value: number; ret_pct: number }[]
+  biggest_gainers: { name: string; ret_pct: number }[]
+  biggest_laggards: { name: string; ret_pct: number }[]
+  stale_nav_count: number
+  stale_nav_funds: string[]
+  category_allocation: Record<string, number>
+  top_holding_share_pct: number
+}
+
+export interface AIInsights {
+  metrics: AIInsightsMetrics
+  summary: string | null
+  insights: InsightText[]
+  risks: InsightText[]
+  ai_enabled?: boolean
+}
+
+export const useAIStatus = () =>
+  useQuery({ queryKey: ['ai-status'], queryFn: () => get<AIStatus>('/ai/status'), staleTime: 60000 })
+
+export const useBriefing = () =>
+  useQuery({
+    queryKey: ['ai-briefing'],
+    queryFn: () => get<Briefing>('/ai/briefing'),
+    staleTime: 15 * 60 * 1000,
+  })
+
+export const useAIInsights = () =>
+  useQuery({
+    queryKey: ['ai-insights'],
+    queryFn: () => get<AIInsights>('/ai/insights'),
+    staleTime: 15 * 60 * 1000,
+  })
+
+export function useAskAI() {
+  return useMutation({
+    mutationFn: (question: string) =>
+      postJSON<{ question: string; answer: string }>('/ai/ask', { question }),
+  })
+}
+
+// ── AI: deep-dive, holding news, rebalance, tax, retirement, risk, scenario, report ──
+
+export interface RebalancePlan {
+  allocation: {
+    equity_pct: number
+    debt_pct: number
+    pf_pct: number
+    equity_inr: number
+    debt_inr: number
+    pf_inr: number
+    stock_inr: number
+  }
+  category_concentration: {
+    top_category: string | null
+    top_category_value: number
+    top_category_share_pct: number
+  }
+  mf_count: number
+  stock_count: number
+}
+
+export interface NarrativeBlock {
+  summary: string
+  points?: string[]
+}
+
+export interface RebalanceResponse {
+  plan: RebalancePlan
+  narrative: NarrativeBlock | null
+  ai_enabled: boolean
+}
+
+export interface TaxRow {
+  name: string
+  category: string
+  gain: number
+  held_years: number | null
+  nature: string
+  equity: boolean
+}
+
+export interface TaxResponse {
+  rows: TaxRow[]
+  summary: {
+    total_unrealized_gain: number
+    equity_ltcg_gain: number
+    equity_ltcg_exemption_remaining: number
+    equity_ltcg_vs_exemption_excess: number
+    stcg_gain: number
+    holding_count: number
+  }
+  as_of: string
+  narrative: NarrativeBlock | null
+  ai_enabled: boolean
+}
+
+export interface RetirementAIBucket {
+  name: string
+  actual: number
+  target: number | null
+  filled_pct: number | null
+}
+
+export interface RetirementAIResponse {
+  readiness: 'on-track' | 'gap' | 'progress'
+  buckets: RetirementAIBucket[]
+  years_covered: { safety: number | null; growth: number | null }
+  refill: {
+    action_needed: boolean
+    topup: number
+    market: string | null
+    nifty_12m_pct: number | null
+  }
+  narrative: NarrativeBlock | null
+  ai_enabled: boolean
+}
+
+export interface RiskScore {
+  factor: string
+  weight: number
+  note: string
+}
+
+export interface RiskResponse {
+  portfolio_risk: number
+  tier: 'low' | 'medium' | 'high'
+  drivers: RiskScore[]
+  top_holding_share_pct: number
+  equity_share_pct: number
+  underwater_count: number
+  narrative: NarrativeBlock | null
+  ai_enabled: boolean
+}
+
+export interface HoldingNewsMatch {
+  title: string
+  url: string
+  source?: string
+  published?: string | null
+  related?: string
+  matched_terms?: string[]
+}
+
+export interface HoldingNewsResponse {
+  terms: { term: string; label: string; kind: string }[]
+  matches: HoldingNewsMatch[]
+  items: { title: string; link?: string; related?: string; matched_terms?: string[]; why?: string }[]
+  ai_enabled: boolean
+}
+
+export interface DeepDiveResponse {
+  metrics: Record<string, unknown> & {
+    entity: string
+    key: string
+    name: string
+    invested: number
+    now: number
+    ret_pct: number
+    ret_abs: number
+    category?: string
+    peer_avg_ret_pct?: number | null
+    vs_peer_pct?: number | null
+  }
+  summary?: string
+  points?: string[]
+  ai_enabled: boolean
+}
+
+export interface ScenarioResponse {
+  sim: {
+    assumption: string
+    equity_exposure: number
+    debt_exposure: number
+    total_before: number
+    delta_inr: number
+    delta_pct: number
+    total_after: number
+  }
+  summary: string | null
+  points: string[]
+  ai_enabled: boolean
+}
+
+export interface ReportResponse {
+  as_of: string
+  metrics: AIInsightsMetrics
+  rebalance: RebalancePlan
+  tax: Pick<TaxResponse, 'rows' | 'summary'>
+  risk: { portfolio_risk: number; tier: string; drivers: RiskScore[] }
+  stocks: Record<string, { Instrument: string; now: number; ret_pct: number }>
+  narrative: NarrativeBlock | null
+  ai_enabled: boolean
+}
+
+export const useHoldingDeepDive = () =>
+  useMutation({
+    mutationFn: ({ entity, key }: { entity: string; key: string }) =>
+      get<DeepDiveResponse>(`/ai/holding/${entity}/${encodeURIComponent(key)}`),
+  })
+
+export const useHoldingNews = () =>
+  useQuery({
+    queryKey: ['ai-holding-news'],
+    queryFn: () => get<HoldingNewsResponse>('/ai/holding-news'),
+    staleTime: 15 * 60 * 1000,
+  })
+
+export const useRebalance = () =>
+  useQuery({ queryKey: ['ai-rebalance'], queryFn: () => get<RebalanceResponse>('/ai/rebalance'), staleTime: 15 * 60 * 1000 })
+
+export const useTax = () =>
+  useQuery({ queryKey: ['ai-tax'], queryFn: () => get<TaxResponse>('/ai/tax'), staleTime: 15 * 60 * 1000 })
+
+export const useRetirementAI = () =>
+  useQuery({ queryKey: ['ai-retirement'], queryFn: () => get<RetirementAIResponse>('/ai/retirement'), staleTime: 15 * 60 * 1000 })
+
+export const useRisk = () =>
+  useQuery({ queryKey: ['ai-risk'], queryFn: () => get<RiskResponse>('/ai/risk'), staleTime: 15 * 60 * 1000 })
+
+export const useReport = () =>
+  useQuery({ queryKey: ['ai-report'], queryFn: () => get<ReportResponse>('/ai/report'), staleTime: 60 * 60 * 1000 })
+
+export function useScenario() {
+  return useMutation({
+    mutationFn: (niftyChangePct: number) =>
+      postJSON<ScenarioResponse>('/ai/scenario', { nifty_change_pct: niftyChangePct }),
+  })
+}

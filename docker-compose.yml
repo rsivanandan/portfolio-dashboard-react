@@ -14,6 +14,8 @@ services:
     environment:
       - CORS_ORIGINS=http://localhost:8081,http://192.168.1.250:8081
       - JWT_SECRET=${JWT_SECRET}
+      - GEMINI_API_KEY=${GEMINI_API_KEY-}
+      - LLM_MODEL=${LLM_MODEL-}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]

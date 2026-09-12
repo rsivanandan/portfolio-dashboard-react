@@ -15,6 +15,7 @@ from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
 
 from auth import auth_router, get_current_user, require_admin
+from ai.routes import router as ai_router
 from pf_import import parse_passbook_pdf
 
 logger = logging.getLogger("portfolio")
@@ -462,6 +463,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(ai_router)
 
 
 @app.get("/api/health")

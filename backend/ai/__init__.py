@@ -1,0 +1,1 @@
+"""AI features for Samridhi — provider-agnostic LLM, news, and insights."""

@@ -12,8 +12,9 @@ set -euo pipefail
 #   4. restarts the container (if SUDO_PASS is set)
 #
 # Usage:
-#   ./deploy.sh update            # code + dist (default)
-#   ./deploy.sh initial           # code + dist + copy live DB from the OLD deployment
+#   ./deploy.sh update            # code + dist, light `compose restart` (default)
+#   ./deploy.sh recreate          # code + dist + --build --force-recreate (compose-config/image changes)
+#   ./deploy.sh initial           # code + dist + copy live DB from the OLD deployment (+ recreate)
 #
 # Env (defaults shown):
 #   NAS_USER=rsivanandan   NAS_HOST=192.168.1.250   NAS_PORT=2222
@@ -90,15 +91,22 @@ if [ "$MODE" = "initial" ]; then
 fi
 
 # ── 4. Restart the container ─────────────────────────────────────────────────
-# The image is runtime-only (source is a bind mount), so code changes never
-# change the image SHA — `up -d` alone would NOT restart a running container.
-# --force-recreate guarantees the new code is actually loaded.
+# The image is runtime-only and the source is a bind mount, so code changes
+# never change the image SHA — `docker compose restart` re-runs the entrypoint
+# and picks up the freshly synced code without recreating the container.
+# Use `./deploy.sh recreate` (or `initial`) for `up -d --build --force-recreate`,
+# which is only required when compose config changes (env, ports, image tag,
+# volumes) or the image itself needs rebuilding.
 #
 # Tries passwordless sudo first (works after the one-time NOPASSWD sudoers
 # setup on the NAS); falls back to SUDO_PASS, then to an interactive prompt
 # (read -s keeps the password out of shell history and process listings).
-echo "→ Restarting container on NAS ..."
-if nas_ssh "cd '${NAS_DIR}' && sudo -n /usr/local/bin/docker compose up -d --build --force-recreate"; then
+RESTART_CMD="restart"
+if [ "$MODE" = "recreate" ] || [ "$MODE" = "initial" ]; then
+  RESTART_CMD="up -d --build --force-recreate"
+fi
+echo "→ Restarting container on NAS (compose ${RESTART_CMD}) ..."
+if nas_ssh "cd '${NAS_DIR}' && sudo -n /usr/local/bin/docker compose ${RESTART_CMD}"; then
   echo "✓ Restarted (passwordless sudo)"
 else
   if [ -z "${SUDO_PASS:-}" ] && [ -t 0 ]; then
@@ -107,11 +115,11 @@ else
     echo
   fi
   if [ -n "${SUDO_PASS:-}" ]; then
-    nas_ssh "cd '${NAS_DIR}' && printf '%s\\n' '${SUDO_PASS}' | sudo -S /usr/local/bin/docker compose up -d --build --force-recreate"
+    nas_ssh "cd '${NAS_DIR}' && printf '%s\\n' '${SUDO_PASS}' | sudo -S /usr/local/bin/docker compose ${RESTART_CMD}"
   else
     echo "ℹ  Skipped — restart the container manually:"
     echo "   ssh -p ${NAS_PORT} ${NAS_USER}@${NAS_HOST}"
-    echo "   cd ${NAS_DIR} && sudo /usr/local/bin/docker compose up -d --build --force-recreate"
+    echo "   cd ${NAS_DIR} && sudo /usr/local/bin/docker compose ${RESTART_CMD}"
   fi
 fi
 

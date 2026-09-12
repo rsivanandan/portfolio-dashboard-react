@@ -77,6 +77,67 @@ portfolio/
 | **Refresh Stocks** | One click — updates all stock LTPs from yfinance |
 | **Save Snapshot** | Saves today's portfolio value to history for CAGR tracking |
 | **Market Ticker** | Live scrolling marquee: Nifty, Sensex, Nifty Bank, USD/INR, Gold, Crude |
+| **Today in Markets** | AI-distilled India market headlines on the Dashboard (RSS + LLM summary) |
+| **AI Portfolio Insights** | Deterministic metrics (concentration, stale NAVs, laggards) narrated by the LLM |
+| **Ask Samridhi** | Floating chat widget — natural-language Q&A over your portfolio |
+
+---
+
+## AI Features (opt-in)
+
+The AI features are **deterministic-first**: every metric is computed locally from
+your DB and the LLM only narrates the numbers — it invents nothing. Without a key the
+app degrades gracefully (raw headlines + deterministic facts, with an "AI not
+configured" indicator).
+
+### 1. Get a free Gemini key
+
+1. Go to **https://aistudio.google.com** and sign in with any Google account.
+2. **Get API key** → create one. No credit card, permanent free tier.
+3. Copy `backend/.env.example` to `backend/.env` and paste the key:
+
+   ```bash
+   cp backend/.env.example backend/.env
+   # GEMINI_API_KEY=paste-your-key-here  → edit backend/.env
+   ```
+
+   `.env` is git-ignored and never synced.
+
+### 2. Swap providers (optional)
+
+Defaults target Gemini's OpenAI-compatible endpoint. To use Groq / OpenRouter /
+Ollama instead, set these in `.env` — no code changes:
+
+```bash
+GEMINI_API_KEY=                         # or LLM_API_KEY=
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+LLM_MODEL=gemini-3.6-flash
+```
+
+For Docker, pass the same variables to compose (`GEMINI_API_KEY=${GEMINI_API_KEY}` is
+already wired in `docker-compose.yml`).
+
+### 3. Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/ai/status` | Is AI configured, and which model? |
+| `GET /api/ai/briefing` | Today's India market headlines, LLM-distilled (cached daily) |
+| `GET /api/ai/insights` | Portfolio metrics + LLM narration and risk flags (cached daily) |
+| `POST /api/ai/ask` | Ask anything about the portfolio in plain English |
+| `GET /api/ai/holding-news` | Headlines matched to your holdings (N2/N3) |
+| `GET /api/ai/holding/{entity}/{key}` | Deep-dive on one holding (`mf`/`stocks`, name/ticker) |
+| `GET /api/ai/rebalance` | Equity/debt/PF allocation vs targets + advice |
+| `GET /api/ai/tax` | STCG/LTCG, ₹1.25L exemption, per-holding gains |
+| `GET /api/ai/retirement` | 3-bucket readiness + refill recommendation + narrative |
+| `GET /api/ai/risk` | Portfolio risk score + drivers |
+| `POST /api/ai/scenario` | "What if NIFTY moves ±X%" impact on corpus |
+| `GET /api/ai/report` | Everything for the monthly report (rendered in UI, download as `.txt`) |
+
+Every endpoint degrades to deterministic data with `ai_enabled: false` when no
+LLM key is present — metrics are always computed locally, the LLM only narrates.
+
+Full implementation detail and roadmap: see `AI_PLAN.md`.
 
 ---
 
