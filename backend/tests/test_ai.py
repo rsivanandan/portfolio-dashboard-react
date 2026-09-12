@@ -1,3 +1,4 @@
+import sqlite3
 import pytest
 import main  # noqa: F401  (ensures app + global auth deps are wired)
 from ai import config, llm, news
@@ -331,3 +332,29 @@ def test_holding_news_with_llm(client, monkeypatch):
     body = r.json()
     assert body["ai_enabled"] is True
     assert body["items"][0]["why"] == "Growth"
+
+def test_ai_endpoints_survive_stocks_schema_drift(client):
+    """Regression (2026-09-12): the live DB's User1_Stocks carries a legacy
+    `id` PRIMARY KEY that User2_Stocks never got — a real drift found in
+    production. `_union_stocks()`-style helpers used to do
+    `SELECT * FROM User1_Stocks UNION ALL SELECT * FROM User2_Stocks`, which
+    raises sqlite3.OperationalError ("SELECTs to the left and right of UNION
+    ALL do not have the same number of result columns") the moment the two
+    tables' column counts differ. On the live app this took down every AI
+    endpoint that touches stocks (insights, holding-news, rebalance, tax,
+    risk, report) while the news-only briefing kept working — which is
+    exactly what made it look like "only the first AI tab has data" rather
+    than an obvious 500. Both offending queries (ai/features.py and
+    ai/insights.py) now list columns explicitly instead of `SELECT *`; this
+    test recreates the asymmetry so neither can regress silently."""
+    conn = sqlite3.connect(main.DB_PATH)
+    conn.execute("ALTER TABLE User1_Stocks ADD COLUMN id INTEGER")
+    conn.commit()
+    conn.close()
+
+    for ep in (
+        "/api/ai/insights", "/api/ai/holding-news", "/api/ai/rebalance",
+        "/api/ai/tax", "/api/ai/risk", "/api/ai/report",
+    ):
+        r = client.get(ep)
+        assert r.status_code == 200, f"{ep} failed: {r.text}"

@@ -26,10 +26,18 @@ def portfolio_metrics() -> dict:
             LEFT JOIN MF_Summary s ON f.AMFI_CODE = s.AMFI_CODE
         """).fetchall()]
 
+        # Explicit columns on both sides — User1_Stocks carries a legacy `id`
+        # primary key that User2_Stocks never got, so `SELECT *` here raises
+        # "SELECTs to the left and right of UNION ALL do not have the same
+        # number of result columns" (same fix as ai/features.py::_union_stocks).
         stocks = [dict(r) for r in conn.execute("""
             SELECT Ticker, Instrument, Qty, Purchase_cost, LTP,
                    Value_at_cost, Value_now
-            FROM (SELECT * FROM User1_Stocks UNION ALL SELECT * FROM User2_Stocks)
+            FROM (
+                SELECT Ticker, Instrument, Qty, Purchase_cost, LTP, Value_at_cost, Value_now FROM User1_Stocks
+                UNION ALL
+                SELECT Ticker, Instrument, Qty, Purchase_cost, LTP, Value_at_cost, Value_now FROM User2_Stocks
+            )
         """).fetchall()]
 
         pf_mf = conn.execute(

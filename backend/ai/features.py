@@ -42,10 +42,19 @@ def _union_mf():
 def _union_stocks():
     conn = db.get_conn()
     try:
+        # Explicit columns on both sides — User1_Stocks carries a legacy `id`
+        # primary key that User2_Stocks never got, so `SELECT *` here raises
+        # "SELECTs to the left and right of UNION ALL do not have the same
+        # number of result columns". main.py's own stock queries already list
+        # columns explicitly for the same reason; match that convention.
         return [dict(r) for r in conn.execute("""
             SELECT Ticker, Instrument, Qty, Purchase_cost, LTP,
                    Value_at_cost, Value_now
-            FROM (SELECT * FROM User1_Stocks UNION ALL SELECT * FROM User2_Stocks)
+            FROM (
+                SELECT Ticker, Instrument, Qty, Purchase_cost, LTP, Value_at_cost, Value_now FROM User1_Stocks
+                UNION ALL
+                SELECT Ticker, Instrument, Qty, Purchase_cost, LTP, Value_at_cost, Value_now FROM User2_Stocks
+            )
         """).fetchall()]
     finally:
         conn.close()
