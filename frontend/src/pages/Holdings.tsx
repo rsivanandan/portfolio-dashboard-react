@@ -27,7 +27,7 @@ import { exportToCSV } from '../utils/export'
 import { useTheme } from '../hooks/useTheme'
 import { useUsers } from '../hooks/useUsers'
 import type { Stock, MutualFund, PFEntry, PFAccount, MFReturnRow } from '../hooks/useApi'
-import { IconSearch, IconDownload } from '@tabler/icons-react'
+import { IconSearch, IconDownload, IconNews } from '@tabler/icons-react'
 import { cn } from '../utils/format'
 
 type PersonTab = 'all' | string
@@ -40,6 +40,51 @@ function ReturnPct({ value }: { value: number | null }) {
     <span className={`font-mono font-semibold text-xs ${pos ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
       {pos ? '+' : ''}
       {value.toFixed(2)}%
+    </span>
+  )
+}
+
+// We don't have (and can't reliably source) the fund manager's actual name —
+// AMFI's own data and mftool never carry it. A live Google News search for
+// "<fund>" fund manager surfaces manager profiles and change stories (fund
+// research sites like Value Research cover these as news) without us having
+// to store or maintain a name that changes whenever the AMC reassigns it.
+//
+// The plan/option suffix ("- Direct Plan - Growth" etc.) has to come off
+// first — verified against Google News' own RSS: searching the full name
+// verbatim returns zero manager-relevant results (that suffix never appears
+// in article prose, so the exact-phrase match fails), while the trimmed
+// scheme name surfaces the actual manager by name.
+function coreFundName(fundName: string): string {
+  return fundName
+    .replace(/\s*\([^)]*\)\s*/g, ' ') // drop "(erstwhile X)"-style asides
+    .replace(/\s*-\s*(Direct|Regular)\s*Plan\s*-?\s*Growth(\s*Option)?\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function managerNewsUrl(fundName: string): string {
+  const q = `"${coreFundName(fundName)}" fund manager`
+  return `https://news.google.com/search?q=${encodeURIComponent(q)}&hl=en-IN&gl=IN&ceid=IN:en`
+}
+
+function FundNameCell({ name }: { name: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-foreground text-xs font-medium">
+      {name}
+      <a
+        href={managerNewsUrl(name)}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        title="Fund manager news"
+        className="inline-flex items-center justify-center w-5 h-5 rounded-full shrink-0
+                   bg-indigo-100 text-indigo-600 hover:bg-indigo-500 hover:text-white
+                   dark:bg-indigo-500/20 dark:text-indigo-400 dark:hover:bg-indigo-500 dark:hover:text-white
+                   transition-colors"
+      >
+        <IconNews size={12} />
+      </a>
     </span>
   )
 }
@@ -248,7 +293,7 @@ function MFSection({ CT, tab, setTab }: { CT: typeof CHART_THEME_LIGHT; tab: Per
         {isLoading ? <Spinner /> : (
           <Table<SummaryRow> data={summaryData} columns={[
             { key: '_i', label: '#', render: (_r, i) => <span className="text-muted-foreground text-xs font-mono">{i + 1}</span> },
-            { key: 'Fund_Name', label: 'Fund Name', render: (r) => <span className="text-foreground text-xs font-medium">{r.Fund_Name}</span> },
+            { key: 'Fund_Name', label: 'Fund Name', render: (r) => <FundNameCell name={r.Fund_Name} /> },
             { key: 'Category', label: 'Category', render: (r) => <span className="text-muted-foreground text-xs">{r.Category}</span> },
             { key: 'Age', label: 'Age', align: 'right', render: (r) => r.Age == null ? <span className="text-muted-foreground text-xs font-mono">—</span> : <span className="font-mono text-xs" title={`Since ${r.First_Purchase}`}>{r.Age}</span> },
             { key: 'Units', label: 'Units', align: 'right', render: (r) => <span className="font-mono text-xs">{r.Units?.toFixed(3)}</span> },
