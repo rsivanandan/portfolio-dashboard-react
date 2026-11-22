@@ -1,7 +1,10 @@
+import sqlite3
 import zlib
 
-from pf_import import parse_passbook_text
+import pytest
 
+import main
+from pf_import import parse_passbook_text
 
 SAMPLE_META = [
     "Member ID/Name: BGBNG01234567890123456 / RAJESH S",
@@ -122,6 +125,40 @@ class TestParseText:
         assert rows[0]["notes"] == "Transfer in"
         assert rows[0]["employee_contrib"] == 3080051.0
         assert rows[0]["employer_contrib"] == 2918193.0
+
+
+class TestWrappedContributionRows:
+    def test_amounts_on_following_line_are_parsed(self):
+        text = "\n".join([
+            *SAMPLE_META,
+            "Mar-2026 01-04-2026 CR Cont. for the",
+            "Due-Month 042026 2,67,028 15,000 32,043 30,793 1,250",
+            "Apr-2026 01-05-2026 CR Cont. for the",
+            "Due-Month 052026 2,67,028 15,000 32,043 30,793 1,250",
+        ])
+        _, rows, warnings = parse_passbook_text(text)
+        assert warnings == []
+        assert len(rows) == 2
+        assert [(r["entry_date"], r["employee_contrib"], r["employer_contrib"]) for r in rows] == [
+            ("2026-03", 32043.0, 30793.0),
+            ("2026-04", 32043.0, 30793.0),
+        ]
+
+    def test_wrapped_row_stops_at_totals_and_interest(self):
+        text = "\n".join([
+            *SAMPLE_META,
+            "Mar-2026 01-04-2026 CR Cont. for the",
+            "Due-Month 042026 2,67,028 15,000 32,043 30,793 1,250",
+            "Total Contributions for the year [ 2026 ] 1,28,172 1,23,172 5,000",
+            "Int. Updated upto 31/03/2026 5,20,614 4,90,547 0",
+        ])
+        _, rows, warnings = parse_passbook_text(text)
+        assert warnings == []
+        assert [(r["entry_date"], r["notes"]) for r in rows] == [
+            ("2026-03", ""),
+            ("2026-03", "Interest credited"),
+        ]
+        assert rows[1]["interest"] == 1011161.0
 
 
 class TestImportEndpoints:
@@ -274,3 +311,40 @@ class TestPFSeparation:
         for r in rows:
             assert "running_balance" in r
             assert "total_contrib" in r
+
+
+class TestAdminPFRowidDrift:
+    @pytest.fixture()
+    def drift_db(self, client, tmp_path):
+        original = main.DB_PATH
+        path = str(tmp_path / "pf_drift.db")
+        conn = sqlite3.connect(path)
+        conn.execute("""
+            CREATE TABLE User1_PF (
+                id INTEGER, account TEXT, employee_contrib REAL, employer_contrib REAL,
+                interest REAL, entry_date TEXT, notes TEXT
+            )
+        """)
+        conn.executemany(
+            "INSERT INTO User1_PF (id, account, employee_contrib, entry_date) VALUES (?, ?, ?, ?)",
+            [(99, "ACC1", 1000, "2026-01"), (1, "ACC2", 2000, "2026-02")],
+        )
+        conn.commit()
+        conn.close()
+        main.DB_PATH = path
+        yield path
+        main.DB_PATH = original
+
+    def test_list_and_delete_use_real_rowid(self, drift_db, client):
+        rows = client.get("/api/admin/pf/user1").json()
+        by_account = {r["account"]: r["rowid"] for r in rows}
+        assert by_account == {"ACC1": 1, "ACC2": 2}
+
+        resp = client.delete(f"/api/admin/pf/user1/{by_account['ACC1']}")
+        assert resp.status_code == 200
+        conn = sqlite3.connect(drift_db)
+        try:
+            remaining = conn.execute("SELECT rowid, account FROM User1_PF").fetchall()
+        finally:
+            conn.close()
+        assert remaining == [(2, "ACC2")]

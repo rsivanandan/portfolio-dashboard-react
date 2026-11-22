@@ -805,7 +805,7 @@ def admin_list_pf(owner: str):
     conn = get_conn()
     try:
         rows = conn.execute(
-            f"SELECT id AS rowid, * FROM {table} ORDER BY entry_date DESC"
+            f"SELECT rowid AS rowid, * FROM {table} ORDER BY entry_date DESC"
         ).fetchall()
         return rows_to_list(rows)
     finally:
@@ -1020,7 +1020,7 @@ def _upsert_pf_rows(conn, table: str, rows: list[dict]):
     updated = 0
     for r in rows:
         existing = conn.execute(
-            f"SELECT id AS rowid FROM {table} WHERE account=? AND entry_date=? AND notes=?",
+            f"SELECT rowid AS rowid FROM {table} WHERE account=? AND entry_date=? AND notes=?",
             (r["account"], r["entry_date"], r["notes"]),
         ).fetchone()
         if existing:
@@ -1659,7 +1659,9 @@ def admin_list_mf(owner: str):
     conn = get_conn()
     try:
         rows = conn.execute(
-            f"SELECT id AS rowid, * FROM {table} WHERE Fund_Name IS NOT NULL AND TRIM(Fund_Name) != '' ORDER BY Fund_Name"
+            f"SELECT rowid AS rowid, * FROM {table} "
+            "WHERE Fund_Name IS NOT NULL AND TRIM(Fund_Name) != '' "
+            "ORDER BY Fund_Name"
         ).fetchall()
         return rows_to_list(rows)
     finally:

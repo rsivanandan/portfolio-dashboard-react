@@ -44,6 +44,7 @@ ROW_FULL_RE = re.compile(r"^([A-Z][a-z]{2})-(\d{4})\s+\d{2}-\d{2}-\d{4}\s+(CR|DR
 # A row whose amounts spilled onto following lines, e.g. "Mar-2021 01-05-2021 CR".
 ROW_STUB_RE = re.compile(r"^([A-Z][a-z]{2})-(\d{4})\s+\d{2}-\d{2}-\d{4}\s+(CR|DR)\s*$")
 INTEREST_RE = re.compile(r"^(Int\.|Interest details)")
+NON_TXN_RE = re.compile(r"^(Total|Closing Balance|Opening Balance|End Of Statement|Printed On)", re.I)
 DATE_RE = re.compile(r"(\d{2})/(\d{2})/(\d{4})")
 NUM_RE = re.compile(r"\d[\d,\.]*")
 # EPFO member IDs: 5-letter regional office code + 17 digits (BGBNG = Bengaluru,
@@ -60,6 +61,30 @@ def _num(token: str) -> float | None:
 
 def _nums(line: str) -> list[float]:
     return [n for n in (_num(x) for x in NUM_RE.findall(line)) if n is not None]
+
+
+def _is_new_record(line: str) -> bool:
+    return bool(
+        ROW_FULL_RE.match(line) or ROW_STUB_RE.match(line)
+        or INTEREST_RE.match(line) or NON_TXN_RE.match(line)
+    )
+
+
+def _read_amounts(lines: list[str], i: int, n: int, initial: list[float], parts: list[str] | None = None):
+    """Pull the amount columns from a row whose text wrapped onto later lines."""
+    nums = list(initial)
+    while len(nums) < 3 and i < n:
+        nxt = lines[i].strip()
+        if not nxt:
+            i += 1
+            continue
+        if _is_new_record(nxt):
+            break
+        i += 1
+        if parts is not None:
+            parts.append(nxt)
+        nums.extend(_nums(nxt))
+    return nums, i
 
 
 def parse_meta(text: str) -> dict:
@@ -124,7 +149,7 @@ def parse_passbook_text(text: str) -> tuple[dict, list[dict], list[str]]:
             mon, yr, txn = m.group(1), m.group(2), m.group(3)
             entry_date = f"{yr}-{MONTHS.get(mon, '??')}"
             amount_text = line[m.end():]
-            nums = _nums(amount_text)
+            nums, i = _read_amounts(lines, i, n, _nums(amount_text))
             if len(nums) < 3:
                 warnings.append(f"Skipped row (too few columns): {line[:90]}")
                 continue
@@ -152,23 +177,10 @@ def parse_passbook_text(text: str) -> tuple[dict, list[dict], list[str]]:
             mon, yr, txn = m.group(1), m.group(2), m.group(3)
             entry_date = f"{yr}-{MONTHS.get(mon, '??')}"
             parts = [line]
-            amount_nums: list[float] | None = None
-            while i < n:
-                nxt = lines[i].strip()
-                if not nxt:
-                    i += 1
-                    continue
-                if ROW_FULL_RE.match(nxt) or ROW_STUB_RE.match(nxt):
-                    break
-                parts.append(nxt)
-                i += 1
-                cand = _nums(nxt)
-                if len(cand) >= 3:
-                    amount_nums = cand
-                    break
+            amount_nums, i = _read_amounts(lines, i, n, [], parts)
             joined = " ".join(parts)
             if "TRANSFER IN" in joined:
-                if amount_nums is None:
+                if len(amount_nums) < 3:
                     warnings.append(f"Skipped transfer-in row (no amounts): {joined[:90]}")
                     continue
                 note = "Transfer in (interest)" if "INTEREST" in joined else "Transfer in"

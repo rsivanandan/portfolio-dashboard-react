@@ -1,4 +1,8 @@
+import sqlite3
+
 import pytest
+
+import main
 
 
 class TestAdminListMF:
@@ -128,3 +132,89 @@ class TestAdminDeleteMF:
     def test_delete_invalid_owner(self, client):
         resp = client.delete("/api/admin/mf/nobody/1")
         assert resp.status_code == 400
+
+
+class TestAdminRowidDrift:
+    """Legacy DBs have an `id` column that can differ from SQLite's rowid."""
+
+    @pytest.fixture()
+    def drift_db(self, client, tmp_path):
+        original = main.DB_PATH
+        path = str(tmp_path / "drift.db")
+        conn = sqlite3.connect(path)
+        conn.execute("""
+            CREATE TABLE User1_MF (
+                id INTEGER, Fund_House TEXT, Fund_Name TEXT, Folio_Number TEXT,
+                AMFI_CODE REAL, Units REAL, Purchase_NAV TEXT, Purchase_Date TEXT,
+                Current_NAV REAL, Value_at_cost REAL, Total_at_cost REAL,
+                Value_now REAL, Total_value_now REAL, NAV_Date TEXT, Previous_NAV REAL
+            )
+        """)
+        conn.executemany(
+            """
+            INSERT INTO User1_MF
+                (id, Fund_House, Fund_Name, Folio_Number, Units,
+                 Purchase_NAV, Purchase_Date, Current_NAV, Value_at_cost, Value_now)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (99, 'HDFC', 'Legacy Drift Fund', '1', 10, '10', '2024-01-01', 12, 100, 120),
+                (1, 'ICICI', 'Other Fund', '2', 20, '20', '2024-02-01', 22, 400, 440),
+                (None, 'SBI', 'Newly Added Fund', '3', 30, '30', '2024-03-01', 32, 900, 960),
+            ],
+        )
+        conn.commit()
+        conn.close()
+        main.DB_PATH = path
+        yield path
+        main.DB_PATH = original
+
+    def _names_by_rowid(self, path):
+        conn = sqlite3.connect(path)
+        try:
+            return dict(conn.execute("SELECT rowid, Fund_Name FROM User1_MF").fetchall())
+        finally:
+            conn.close()
+
+    def test_list_returns_real_rowids(self, drift_db, client):
+        rows = client.get("/api/admin/mf/user1").json()
+        by_name = {r["Fund_Name"]: r["rowid"] for r in rows}
+        assert by_name == {
+            "Legacy Drift Fund": 1,
+            "Other Fund": 2,
+            "Newly Added Fund": 3,
+        }
+
+    def test_update_edits_the_intended_row(self, drift_db, client):
+        rows = client.get("/api/admin/mf/user1").json()
+        rid = next(r["rowid"] for r in rows if r["Fund_Name"] == "Legacy Drift Fund")
+        payload = {
+            "owner": "user1",
+            "Fund_House": "HDFC",
+            "Fund_Name": "Renamed Drift Fund",
+            "Folio_Number": "1",
+            "AMFI_CODE": 1,
+            "Units": 10,
+            "Purchase_NAV": "10",
+            "Purchase_Date": "2024-01-01",
+            "Current_NAV": 12,
+            "Value_at_cost": 100,
+            "Value_now": 120,
+        }
+        resp = client.put(f"/api/admin/mf/user1/{rid}", json=payload)
+        assert resp.status_code == 200
+        assert self._names_by_rowid(drift_db) == {
+            1: "Renamed Drift Fund",
+            2: "Other Fund",
+            3: "Newly Added Fund",
+        }
+
+    def test_delete_removes_the_intended_row(self, drift_db, client):
+        rows = client.get("/api/admin/mf/user1").json()
+        rid = next(r["rowid"] for r in rows if r["Fund_Name"] == "Newly Added Fund")
+        resp = client.delete(f"/api/admin/mf/user1/{rid}")
+        assert resp.status_code == 200
+        assert self._names_by_rowid(drift_db) == {
+            1: "Legacy Drift Fund",
+            2: "Other Fund",
+        }
